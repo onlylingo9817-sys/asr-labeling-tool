@@ -879,9 +879,12 @@ async function syncToLabelStudio(){
   const tagKeys=[...new Set(rows.flatMap(r=>r.tags||[]))];
   let mode='confirmed';
   if(!confirmed){
-    if(!confirm(`当前没有人工确认句。\n本次只会写 ${pending} 句到 Prediction（草稿/建议），不会创建 Annotation，也不会标记任务完成。\n已选标签 ${tagged} 句${tagKeys.length?'（'+tagKeys.join(', ')+'）':''}\n继续？`)) return;
+    const typed=prompt(`当前没有人工确认句。\n默认只会写 ${pending} 句到 Prediction，标签不会出现在正式 Annotation。\n\n如要把当前 ${rows.length} 句全部创建为正式 Annotation（高风险），请输入“全部同步”：`,'');
+    if(typed===null) return;
+    if(typed.trim()==='全部同步'){ mode='all'; }
+    else if(typed.trim()){ alert('口令不正确，已取消。'); return; }
   }else{
-    const msg=`task ${data.taskId}：共 ${rows.length} 句\n人工确认 ${confirmed} 句 → 写 Annotation\n机器待定 ${pending} 句 → 写 Prediction\n已选标签 ${tagged} 句${tagKeys.length?'（'+tagKeys.join(', ')+'）':''}\n写回前自动备份数据库。继续？`;
+    const msg=`task ${data.taskId}：共 ${rows.length} 句\n人工确认 ${confirmed} 句 → 写 Annotation\n已选标签 ${tagged} 句 → 合并进 Annotation（不覆盖旧说话人/文本）\n机器待定 ${pending} 句 → 写 Prediction\n标签：${tagKeys.length?tagKeys.join(', '):'无'}\n写回前自动备份数据库。继续？`;
     if(!confirm(msg)) return;
     if(pending){
       const typed=prompt(`默认只把 ${confirmed} 句人工确认写为 Annotation，${pending} 句机器待定只写 Prediction。\n\n如确实要把全部 ${rows.length} 句都当正式标注提交，请输入“全部同步”：`,'');
@@ -918,8 +921,9 @@ async function syncToLabelStudio(){
     const ann=out.annotation;
     const pred=out.prediction;
     const bits=[];
-    if(ann) bits.push(`Annotation #${ann.id}（${ann.action==='updated'?'已更新':'已创建'}，${ann.items} 条结果）`);
+    if(ann) bits.push(`Annotation #${ann.id}（${{updated:'已更新',created:'已创建',merged:'已合并',replaced:'已替换'}[ann.action]||ann.action}，${ann.items} 条结果${ann.addedRows?`，新增 ${ann.addedRows} 句`:''}${ann.changedRows?`，更新 ${ann.changedRows} 句`:''}）`);
     if(pred) bits.push(`Prediction #${pred.id}（${pred.items} 条结果）`);
+    if(out.taggedNotInAnnotation) bits.push('注意：该 task 还没有 Annotation，标签目前只写入 Prediction；如需正式标注，请选择“全部同步”创建。');
     if(!bits.length) bits.push('没有可写内容');
     setSyncStatus(`已同步：${bits.join('；')}`);
     alert(`同步成功\n${bits.join('\n')}\n\n人工确认 ${out.confirmed} 句，待定 ${out.pending} 句。`);

@@ -136,6 +136,72 @@ def _format_range(rows):
     return out
 
 
+
+def merge_into_annotation(existing, rows):
+    """Merge local rows into an existing Label Studio result without wiping it.
+
+    Matching is by exact interval first, then by a >=80% overlap. For a matched
+    row we update only what the local row actually carries:
+      - speaker region: updated when the local row is manually confirmed
+      - text region: updated when non-empty
+      - tags region: replaced when the local row has tags
+    Unmatched local rows are appended; unmatched existing regions are preserved.
+    """
+    import copy
+    merged=copy.deepcopy(existing or [])
+    usable=[r for r in merged if isinstance(r,dict) and isinstance(r.get('value'),dict)]
+    def interval(r):
+        v=r.get('value') or {}; return round(float(v.get('start',0)),3), round(float(v.get('end',0)),3)
+    def overlap(a,b):
+        return max(0.0,min(a[1],b[1])-max(a[0],b[0]))
+    def find(row):
+        start,end=round(float(row['start']),3),round(float(row['end']),3)
+        same=[r for r in usable if interval(r)==(start,end)]
+        if same: return same
+        dur=max(0.001,end-start)
+        cands=[r for r in usable if overlap(interval(r),(start,end))>=0.8*dur]
+        return cands
+    changed=added=0
+    for row in rows:
+        matches=find(row)
+        labels=row.get('speaker'); body=(row.get('bodyText') or '').strip(); tags=list(row.get('tags') or [])
+        # Match regions by id when possible; otherwise use the first matching group.
+        ids={r.get('id') for r in matches}
+        target_id=next(iter(ids),None)
+        if target_id is None:
+            # Create a fresh group with a collision-free id.
+            n=0
+            while f'merged{n:05d}' in {r.get('id') for r in usable}: n+=1
+            target_id=f'merged{n:05d}'
+            merged.append(_region(target_id,float(row['start']),float(row['end']),'speaker','labels',{'labels':[labels]}))
+            if body: merged.append(_region(target_id,float(row['start']),float(row['end']),'text','textarea',{'text':[body]}))
+            if tags: merged.append(_region(target_id,float(row['start']),float(row['end']),'tags','choices',{'choices':tags}))
+            added+=1
+            continue
+        touched=False
+        # update speaker only if manually confirmed; tag-only rows keep old speaker
+        if row.get('confidence') in CONFIRMED:
+            target=next((r for r in usable if r.get('id')==target_id and r.get('from_name')=='speaker'),None)
+            if target is not None:
+                target['value']['labels']=[labels]; touched=True
+            elif labels:
+                merged.append(_region(target_id,float(row['start']),float(row['end']),'speaker','labels',{'labels':[labels]})); touched=True
+        if body:
+            target=next((r for r in usable if r.get('id')==target_id and r.get('from_name')=='text'),None)
+            if target is not None:
+                if target['value'].get('text')!= [body]: target['value']['text']=[body]; touched=True
+            else:
+                merged.append(_region(target_id,float(row['start']),float(row['end']),'text','textarea',{'text':[body]})); touched=True
+        # tags are authoritative when present; remove old tag region for same id group
+        if tags:
+            old=[r for r in merged if r.get('id')==target_id and r.get('from_name')=='tags']
+            for r in old: merged.remove(r)
+            v=next((r for r in merged if r.get('id')==target_id and r.get('from_name')=='speaker'),None)
+            start,end=interval(v) if v else (float(row['start']),float(row['end']))
+            merged.append(_region(target_id,start,end,'tags','choices',{'choices':tags})); touched=True
+        if touched: changed+=1
+    return merged, changed, added
+
 def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=False):
     """Write confirmed rows as Annotation, pending rows as Prediction.
 
@@ -147,10 +213,11 @@ def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=Fals
         raise ValueError('mode must be confirmed or all')
     rows=_format_range(rows)
     confirmed=[r for r in rows if r.get('confidence') in CONFIRMED]
-    pending=[r for r in rows if r.get('confidence') not in CONFIRMED]
-    ann_rows=rows if mode=='all' else confirmed
-    plan={'confirmed':len(confirmed),'pending':len(pending),'annotation':None,
-          'prediction':None,'dryRun':bool(dry_run),
+    tagged=[r for r in rows if r.get('confidence') not in CONFIRMED and r.get('tags')]
+    pending=[r for r in rows if r.get('confidence') not in CONFIRMED and not r.get('tags')]
+    ann_rows=rows if mode=='all' else [r for r in rows if r in confirmed or r in tagged]
+    plan={'confirmed':len(confirmed),'tagged':len(tagged),'pending':len(pending),'annotation':None,
+          'prediction':None,'taggedNotInAnnotation':False,'dryRun':bool(dry_run),
           'annotationResult':to_result(ann_rows) if ann_rows else []}
     if dry_run:
         return plan
@@ -166,19 +233,30 @@ def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=Fals
         mine=[a for a in anns if (a.get('completed_by') or {}).get('id')==1]
         # Our "mine" test uses the API's latest completed_by. If the API only
         # exposes a legacy task_completion row, don't assume ownership.
-        if anns and task_id in READ_ONLY_ANNOTATION_TASKS:
+        if anns and task_id in READ_ONLY_ANNOTATION_TASKS and replace_annotation:
             raise PermissionError(
                 f'task {task_id} 已有正式人工标注，同步服务默认只读；'
                 '若确需覆盖，请以 ALLOW_TASK5_REPLACE=1 重启服务并显式确认。')
-        if mine:
-            if not replace_annotation:
-                raise PermissionError(
-                    f'task {task_id} 已有 Annotation #{mine[0]["id"]}；'
-                    '为避免覆盖，请在页面明确选择“替换已有标注”后重试。')
+        if not mine and tagged and mode!='all':
+            # tags alone are not a complete annotation; keep them in Prediction
+            # rather than silently marking the task as finished.
+            plan['taggedNotInAnnotation']=True
+            ann_rows=[]
+        if ann_rows and mine:
             ann_id=mine[0]['id']
-            api(f'/api/annotations/{ann_id}/', method='PATCH', body={'result':result})
-            plan['annotation']={'action':'updated','id':ann_id,'items':len(result)}
-        else:
+            if replace_annotation:
+                api(f'/api/annotations/{ann_id}/', method='PATCH', body={'result':result})
+                plan['annotation']={'action':'replaced','id':ann_id,'items':len(result)}
+            else:
+                # Safe upsert: preserve every existing region that doesn't
+                # correspond to a changed local row. In particular, a tag-only
+                # update must not wipe the original speaker/text annotations.
+                merged, changed, added = merge_into_annotation(
+                    mine[0].get('result') or [], ann_rows)
+                api(f'/api/annotations/{ann_id}/', method='PATCH', body={'result':merged})
+                plan['annotation']={'action':'merged','id':ann_id,'items':len(merged),
+                                    'changedRows':changed,'addedRows':added}
+        elif ann_rows:
             if anns:
                 raise PermissionError(
                     f'task {task_id} 已有他人的 Annotation；本工具不会覆盖或删除他人的结果。')

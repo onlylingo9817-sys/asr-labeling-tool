@@ -235,9 +235,10 @@ overlap / accent / unclear / cut
 规则：
 
 - 人工确认句 → 写为 Annotation。
-- 机器待定 / UNKNOWN → 写为 Prediction。
-- 默认只写人工确认句，不会把机器结果当正式标注。
-- 已有 Annotation 不会被静默覆盖，会弹出二次确认。
+- 已勾标签的句子 → 合并进已有 Annotation（只补标签，不改旧说话人/文本）。
+- 机器待定 / UNKNOWN 且未勾标签 → 写为 Prediction。
+- 没有 Annotation 的任务，标签默认只进 Prediction；要创建正式 Annotation，必须在同步时输入“全部同步”。
+- 已有 Annotation 不会被静默覆盖；会做安全合并。
 - 写回前自动备份数据库。
 - 项目 ID 与 task 实际所属项目不一致时，直接拒绝写回。
 
