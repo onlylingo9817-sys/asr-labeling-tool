@@ -79,6 +79,28 @@ def _user_id(value):
 def is_mine(annotation):
     return _user_id(annotation.get('completed_by')) == 1
 
+def _merge_same_time_rows(rows):
+    """Merge local rows that occupy exactly the same interval.
+
+    Label Studio draws same-time regions on top of each other, which makes the
+    checkbox state impossible to see. Keep one row per interval, merging tags
+    and preferring a confirmed speaker/text.
+    """
+    out=[]
+    index={}
+    for row in rows:
+        key=(round(float(row['start']),3), round(float(row['end']),3))
+        if key not in index:
+            row=dict(row); row['tags']=list(row.get('tags') or []); row['pieces']=list(row.get('pieces') or [])
+            index[key]=len(out); out.append(row); continue
+        prev=out[index[key]]
+        if row.get('confidence') in CONFIRMED and prev.get('confidence') not in CONFIRMED:
+            prev['confidence']=row['confidence']; prev['speaker']=row.get('speaker') or prev.get('speaker')
+        if (row.get('bodyText') or '').strip() and not (prev.get('bodyText') or '').strip():
+            prev['bodyText']=row['bodyText']
+        prev['tags']=list(dict.fromkeys([*(prev.get('tags') or []), *(row.get('tags') or [])]))
+    return out
+
 def _region(rid, start, end, from_name, kind, value):
     return {'id':rid,'from_name':from_name,'to_name':'audio','type':kind,
             'value':{'start':start,'end':end,'channel':0,**value}}
@@ -221,7 +243,7 @@ def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=Fals
     """
     if mode not in ('confirmed','all'):
         raise ValueError('mode must be confirmed or all')
-    rows=_format_range(rows)
+    rows=_merge_same_time_rows(_format_range(rows))
     confirmed=[r for r in rows if r.get('confidence') in CONFIRMED]
     tagged=[r for r in rows if r.get('confidence') not in CONFIRMED and r.get('tags')]
     pending=[r for r in rows if r.get('confidence') not in CONFIRMED and not r.get('tags')]

@@ -1,8 +1,8 @@
 """Offline regression tests for sync payload and merge semantics."""
 import json, sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[2]
-sys.path.insert(0,str(ROOT/'app'/'sync'))
+ROOT=Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0,str(ROOT/'work'))
 import sync_server
 
 def test_parent_and_nested_regions():
@@ -46,6 +46,15 @@ def test_tag_merge_preserves_speaker():
     assert any(x['from_name']=='tags' and x['value']['choices']==['overlap'] for x in out)
     print('test_tag_merge_preserves_speaker OK')
 
+def test_same_time_rows_merge():
+    rows=[
+      {'start':1.0,'end':2.0,'bodyText':'A','speaker':'CUSTOMER_1','confidence':'low','tags':[]},
+      {'start':1.0,'end':2.0,'bodyText':'A','speaker':'CUSTOMER_1','confidence':'manual','tags':['overlap']},
+    ]
+    out=sync_server._merge_same_time_rows(rows)
+    assert len(out)==1 and out[0]['tags']==['overlap']
+    print('test_same_time_rows_merge OK')
+
 def test_completed_by_shapes():
     assert sync_server.is_mine({'completed_by':1})
     assert sync_server.is_mine({'completed_by':{'id':1}})
@@ -54,4 +63,4 @@ def test_completed_by_shapes():
     print('test_completed_by_shapes OK')
 
 if __name__=='__main__':
-    test_parent_and_nested_regions(); test_pending_only(); test_invalid_piece(); test_tag_merge_preserves_speaker(); test_completed_by_shapes()
+    test_parent_and_nested_regions(); test_pending_only(); test_invalid_piece(); test_tag_merge_preserves_speaker(); test_completed_by_shapes(); test_same_time_rows_merge()
