@@ -873,68 +873,41 @@ async function syncToLabelStudio(){
   const btn=$('#sync');
   flushPersist();
   const rows=syncRows();
-  const confirmed=rows.filter(r=>r.confidence==='manual').length;
-  const pending=rows.length-confirmed;
   const tagged=rows.filter(r=>(r.tags||[]).length).length;
   const tagKeys=[...new Set(rows.flatMap(r=>r.tags||[]))];
-  let mode='confirmed';
-  if(!confirmed){
-    const typed=prompt(`当前没有人工确认句。\n默认只会写 ${pending} 句到 Prediction，标签不会出现在正式 Annotation。\n\n如要把当前 ${rows.length} 句全部创建为正式 Annotation（高风险），请输入“全部同步”：`,'');
-    if(typed===null) return;
-    if(typed.trim()==='全部同步'){ mode='all'; }
-    else if(typed.trim()){ alert('口令不正确，已取消。'); return; }
-  }else{
-    const msg=`task ${data.taskId}：共 ${rows.length} 句\n人工确认 ${confirmed} 句 → 写 Annotation\n已选标签 ${tagged} 句 → 合并进 Annotation（不覆盖旧说话人/文本）\n机器待定 ${pending} 句 → 写 Prediction\n标签：${tagKeys.length?tagKeys.join(', '):'无'}\n写回前自动备份数据库。继续？`;
-    if(!confirm(msg)) return;
-    if(pending){
-      const typed=prompt(`默认只把 ${confirmed} 句人工确认写为 Annotation，${pending} 句机器待定只写 Prediction。\n\n如确实要把全部 ${rows.length} 句都当正式标注提交，请输入“全部同步”：`,'');
-      if(typed===null) return;
-      if(typed.trim()){
-        if(typed.trim()!=='全部同步'){ alert('口令不正确，已取消；未写入任何内容。'); return; }
-        if(!confirm('高风险操作：把机器待定结果也提交为正式 Annotation？')) return;
-        mode='all';
-      }
-    }
-  }
+  if(!confirm(`将把当前 ${rows.length} 句完整状态覆盖写入 task ${data.taskId}（项目 ${data.projectId}）。\n其中 ${tagged} 句有标签：${tagKeys.length?tagKeys.join(', '):'无'}\n写回前自动备份数据库。继续？`)) return;
   btn.disabled=true; const old=btn.textContent; btn.textContent='同步中…';
-  setSyncStatus('正在写回…');
+  setSyncStatus('正在覆盖写回…');
   try{
-    let conflict=null;
-    let replaceAnnotation=false;
     let out=null;
+    let replaceAnnotation=true;
     for(let attempt=0;attempt<2;attempt++){
       const res=await fetch(bundle.syncEndpoint,{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({projectId:data.projectId,taskId:data.taskId,utterances:rows,mode,replaceAnnotation})});
+        body:JSON.stringify({projectId:data.projectId,taskId:data.taskId,utterances:rows,mode:'all',replaceAnnotation})});
       out=await res.json();
       if(res.ok&&out.ok) break;
-      if((res.status===409 || res.status===403) && out.code==='annotation_conflict' && !replaceAnnotation){
-        conflict=out;
-        if(!confirm(`${out.error}\n\n是否明确允许替换这个任务的已有 Annotation？\n\n选择“取消”最安全：可在 Label Studio 里先导出旧标注。`)){
-          throw new Error('已取消，未覆盖任何已有标注');
-        }
-        replaceAnnotation=true;
+      if((res.status===409||res.status===403) && out.code==='annotation_conflict' && attempt===0){
+        if(!confirm(`${out.error}\n\n是否明确允许覆盖这个任务的 Annotation？`)) throw new Error('已取消，未写入任何内容');
         continue;
       }
       throw new Error(out.error||('HTTP '+res.status));
     }
     if(!out||!out.ok) throw new Error(out?.error||'同步失败');
-    const ann=out.annotation;
-    const pred=out.prediction;
+    const ann=out.annotation, pred=out.prediction;
     const bits=[];
-    if(ann) bits.push(`Annotation #${ann.id}（${{updated:'已更新',created:'已创建',merged:'已合并',replaced:'已替换'}[ann.action]||ann.action}，${ann.items} 条结果${ann.addedRows?`，新增 ${ann.addedRows} 句`:''}${ann.changedRows?`，更新 ${ann.changedRows} 句`:''}）`);
+    if(ann) bits.push(`Annotation #${ann.id}（${ann.action==='created'?'已创建':'已覆盖'}，${ann.items} 条结果）`);
     if(pred) bits.push(`Prediction #${pred.id}（${pred.items} 条结果）`);
-    if(out.taggedNotInAnnotation) bits.push('注意：该 task 还没有 Annotation，标签目前只写入 Prediction；如需正式标注，请选择“全部同步”创建。');
-    if(!bits.length) bits.push('没有可写内容');
     setSyncStatus(`已同步：${bits.join('；')}`);
-    alert(`同步成功\n${bits.join('\n')}\n\n人工确认 ${out.confirmed} 句，待定 ${out.pending} 句。`);
+    alert(`同步成功\n${bits.join('\n')}\n共写入 ${rows.length} 句，标签 ${tagged} 句。`);
     btn.textContent='✓ 已同步';
-    setTimeout(()=>{btn.textContent=old;btn.disabled=false;},1500);
   }catch(e){
     setSyncStatus('同步失败：'+e.message,true);
-    btn.textContent=old; btn.disabled=false;
-    alert('同步失败：'+e.message+'\n请确认同步服务已启动（scripts/start_all.sh）');
+    alert('同步失败：'+e.message);
+  }finally{
+    btn.disabled=false; setTimeout(()=>{btn.textContent=old;},1200);
   }
 }
+
 $('#undo').addEventListener('click',undo);
 $('#redo').addEventListener('click',redo);
 $('#mergeNow').addEventListener('click',()=>{
