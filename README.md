@@ -118,3 +118,31 @@ scripts/         启停与状态
 6. 没有 annotation 的录音会以“未标注”拉入；可以点「＋ 新增一句」手动开始录入。
 
 原有 `data.json` 中没有 `projectId` 的旧录音，建议补上 `projectId` 后再做多项目操作。
+
+
+## 预处理能力（音频 / 波形 / ASR）
+
+从 Label Studio 拉取 task 时，工具会自动：
+
+1. 将音频转为 16k 单声道 16-bit WAV；
+2. 生成独立波形图；
+3. 如果该 task 没有 Annotation，自动运行 FunASR，生成带毫秒时间、嵌套插话的底稿；
+4. 已存在 Annotation 的 task 不会被 ASR 覆盖，保留原有句子和时间。
+
+编辑器顶部还有「✦ 生成 ASR 底稿」，可对当前录音重新生成；这会替换该录音在编辑器里的句子，请先确认。
+
+运行 ASR 需要额外环境：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+首次运行 FunASR 会下载模型，30 分钟录音通常需要数分钟。若不想自动跑 ASR，可在 `.env` 设置：
+
+```ini
+AUTO_ASR=0
+```
+
+音频、波形始终会生成，不依赖 ASR。

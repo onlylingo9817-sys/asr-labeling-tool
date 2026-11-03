@@ -9,7 +9,7 @@ Safety:
   * never deletes another user's Annotation
 """
 from __future__ import annotations
-import json, os, shutil, subprocess, time, urllib.error, urllib.request
+import json, os, shutil, sqlite3, subprocess, time, urllib.error, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -28,6 +28,17 @@ if LS_BIN == 'label-studio' and not shutil.which(LS_BIN):
     candidate = Path.home()/'.venvs'/'label-studio'/'bin'/'label-studio'
     if candidate.exists(): LS_BIN = str(candidate)
 EDITOR_DATA = Path(os.environ.get('EDITOR_DATA_PATH', str(ROOT/'app'/'editor'/'data.json')))
+try:
+    from preprocess import prepare_audio, build_asr_recording
+except Exception:
+    try:
+        import sys
+        sys.path.insert(0, str(ROOT))
+        sys.path.insert(0, str(ROOT/'work'))
+        from preprocess import prepare_audio, build_asr_recording
+    except Exception:
+        prepare_audio = None
+        build_asr_recording = None
 
 def task_audio_map():
     """Return task_id -> Label Studio audio path from local editor data.
@@ -78,6 +89,15 @@ def _user_id(value):
 
 def is_mine(annotation):
     return _user_id(annotation.get('completed_by')) == 1
+
+def probe_duration(path):
+    try:
+        p=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration',
+                          '-of','default=nw=1:nk=1',str(path)],capture_output=True,text=True)
+        return float(p.stdout.strip()) if p.returncode==0 else 0.0
+    except Exception:
+        return 0.0
+
 
 def _merge_same_time_rows(rows):
     """Merge local rows that occupy exactly the same interval.
@@ -296,6 +316,16 @@ def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=Fals
             created=api(f'/api/tasks/{task_id}/annotations/', method='POST', body={'result':result})
             plan['annotation']={'action':'created','id':created.get('id'),'items':len(result)}
 
+    # After a successful write, remove the user's stale draft for this task.
+    # Label Studio may otherwise reopen the draft tab, hiding the new annotation
+    # and making tags look missing even though they were saved.
+    try:
+        conn=sqlite3.connect(DB)
+        conn.execute('delete from tasks_annotationdraft where task_id=? and user_id=1',(task_id,))
+        conn.commit(); conn.close()
+    except Exception:
+        pass  # draft cleanup must not turn a successful write into an error
+
     if pending and mode!='all':
         version='editor-pending-v2'
         for pred in (api(f'/api/predictions/?task={task_id}') or []):
@@ -413,31 +443,35 @@ def pull_project(project_id, force=False, include_empty=True):
         duration=max((u['end'] for u in utterances), default=0.0)
         rel=f'audio/project{project_id}_task{tid}.wav'
         dest=ROOT/'app'/'editor'/rel
-        dest.parent.mkdir(parents=True,exist_ok=True)
-        if force or not dest.exists():
-            shutil.copyfile(src,dest)
-        if not duration:
-            try:
-                p=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration',
-                                  '-of','default=nw=1:nk=1',str(dest)],capture_output=True,text=True)
-                duration=float(p.stdout.strip()) if p.returncode==0 else 0.0
-            except Exception:
-                duration=0.0
-        # Generate a waveform per pulled project/task. Failure is non-fatal.
         wave_rel=f'waveforms/project{project_id}_task{tid}.png'
         wave_dest=ROOT/'app'/'editor'/wave_rel
-        wave_dest.parent.mkdir(parents=True,exist_ok=True)
-        if not wave_dest.exists():
+        if prepare_audio:
             try:
-                subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-i',str(dest),
-                                '-filter_complex','showwavespic=s=1400x160:colors=#1d4ed8',
-                                '-frames:v','1','-y',str(wave_dest)],check=True,
-                               capture_output=True)
-            except Exception:
+                duration=prepare_audio(src,dest,wave_dest)
+            except Exception as exc:
+                # fall back to a plain copy; the task should still be visible
+                dest.parent.mkdir(parents=True,exist_ok=True)
+                if force or not dest.exists(): shutil.copyfile(src,dest)
+                duration=probe_duration(dest)
                 wave_rel=''
-        rec={'taskId':tid,'projectId':project_id,'label':f'project{project_id} / task {tid}',
+        else:
+            dest.parent.mkdir(parents=True,exist_ok=True)
+            if force or not dest.exists(): shutil.copyfile(src,dest)
+            duration=duration or 0.0
+        if duration<=0:
+            duration=probe_duration(dest)
+        windows=[]
+        if not utterances and build_asr_recording and os.environ.get('AUTO_ASR','1')!='0':
+            try:
+                asr_data=build_asr_recording(dest,tid,duration)
+                utterances=asr_data['utterances']; windows=asr_data['windows']
+                duration=asr_data['duration']
+                rel=rel
+            except Exception as exc:
+                missing.append({'taskId':tid,'reason':f'ASR failed: {str(exc)[-300:]}'})
+        rec={'taskId':tid,'projectId':project_id,'label':Path(audio).stem or f'project{project_id} / task {tid}',
              'audio':rel,'waveform':wave_rel,'lsAudio':audio,'duration':round(duration,3),
-             'windows':[],'utterances':utterances}
+             'windows':windows,'utterances':utterances}
         # Replace a task with the same id only on explicit force.
         recordings[:]=[r for r in recordings if not (
             int(r['taskId'])==tid and int(r.get('projectId') or 0)==project_id and force)]
@@ -468,13 +502,28 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e: return self._send(500, {'ok':False,'error':str(e)})
         self._send(404, {'error':'not found'})
     def do_POST(self):
-        if not (self.path.startswith('/sync') or self.path.startswith('/pull')):
+        if not (self.path.startswith('/sync') or self.path.startswith('/pull') or self.path.startswith('/asr')):
             return self._send(404, {'error':'not found'})
         try:
             length=int(self.headers.get('Content-Length','0'))
             payload=json.loads(self.rfile.read(length) or b'{}')
             if self.path.startswith('/pull'):
                 return self._send(200, {'ok':True, **pull_project(payload['projectId'], bool(payload.get('force')), bool(payload.get('includeEmpty', True)))} )
+            if self.path.startswith('/asr'):
+                project_id=int(payload['projectId']); task_id=int(payload['taskId'])
+                data_path=EDITOR_DATA
+                bundle=json.loads(data_path.read_text(encoding='utf-8'))
+                rec=next((r for r in bundle.get('recordings',[])
+                          if int(r['taskId'])==task_id and int(r.get('projectId') or 0)==project_id),None)
+                if not rec: raise ValueError('task not found in local editor data')
+                if not build_asr_recording: raise RuntimeError('ASR 模块未安装')
+                audio_path=data_path.parent/rec['audio']
+                result=build_asr_recording(audio_path,task_id,float(rec.get('duration') or 0))
+                rec['duration']=result['duration']; rec['windows']=result['windows']
+                rec['utterances']=result['utterances']
+                data_path.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8')
+                return self._send(200,{'ok':True,'taskId':task_id,'sentences':len(result['utterances']),
+                                       'windows':len(result['windows'])})
             if self.path.startswith('/sync'):
                 # A project id is required for new multi-project clients. It is
                 # optional for old local data whose recordings have no projectId.
@@ -505,6 +554,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__=='__main__':
     os.chdir(ROOT)
-    srv=ThreadingHTTPServer(('127.0.0.1',8768), Handler)
+    srv=ThreadingHTTPServer(('127.0.0.1',int(os.environ.get('SYNC_PORT','8768'))), Handler)
     print('sync server on http://127.0.0.1:8768  (POST /sync)')
     srv.serve_forever()

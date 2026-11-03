@@ -126,6 +126,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
       <option value="">加载中…</option>
     </select>
     <button id="pullLS" title="从 Label Studio 拉取该项目的新任务，不覆盖本地已有录音">⇣ 从 Label Studio 拉取</button>
+    <button id="asrBtn" title="对当前录音重新生成 ASR 底稿（会替换当前录音的句子）">✦ 生成 ASR 底稿</button>
     <label class="recLabel" for="recSel">语音</label>
     <select id="recSel" class="recSel" title="切换要校对的录音"></select>
     <span class="sub" id="recMeta"></span>
@@ -281,6 +282,7 @@ async function init(){
     flushPersist(); localStorage.setItem('asr-project',$('#projSel').value); populateRecordings();
   });
   $('#pullLS').addEventListener('click',pullFromLabelStudio);
+  $('#asrBtn').addEventListener('click',runASR);
   $('#addRow').addEventListener('click',addUtterance);
   const preferred=Number(localStorage.getItem('asr-project'))||localIds[0]||null;
   await refreshProjectNames(localIds,preferred);
@@ -335,6 +337,26 @@ function addUtterance(){
     isInterjection:false,hasInterjection:false,tags:[],grade:'unknown',displayLabel:'待核',window:'full'});
   persist(); render(); seekTo(data.utterances.length-1);
 }
+async function runASR(){
+  if(!data || !data.taskId){ alert('请先选择一条录音。'); return; }
+  if(!confirm(`将重新识别当前录音并替换本页句子。\n录音：${data.title}\n继续？`)) return;
+  const btn=$('#asrBtn'); const old=btn.textContent;
+  btn.disabled=true; btn.textContent='识别中…'; setSyncStatus('正在运行 ASR，可能需要 1–3 分钟…');
+  try{
+    const res=await fetch(bundle.syncEndpoint.replace('/sync','/asr'),{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({projectId:data.projectId,taskId:data.taskId})});
+    const out=await res.json();
+    if(!res.ok||!out.ok) throw new Error(out.error||('HTTP '+res.status));
+    const fresh=await (await fetch('data.json?_='+Date.now())).json();
+    bundle.recordings=fresh.recordings;
+    populateRecordings();
+    setSyncStatus(`ASR 完成：${out.sentences} 句，${out.windows} 个窗口`);
+    alert(`ASR 完成\n${out.sentences} 句，${out.windows} 个窗口`);
+  }catch(e){ setSyncStatus('ASR 失败：'+e.message,true); alert('ASR 失败：'+e.message); }
+  finally{ btn.disabled=false; btn.textContent=old; }
+}
+
 function loadRecording(taskId){
   const rec=bundle.recordings.find(r=>Number(r.taskId)===Number(taskId) && Number(r.projectId||0)===currentProject());
   if(!rec) return;

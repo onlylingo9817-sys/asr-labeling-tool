@@ -330,3 +330,17 @@ work/sync_backups/
 6. 听音、改文本、定说话人
 7. 点“同步到 Label Studio”
 ```
+
+
+## 预处理与 ASR
+
+「从 Label Studio 拉取」会自动完成音频标准化、波形生成。没有 Annotation 的 task 会自动生成 ASR 底稿；已有 Annotation 的 task 只补音频和波形，不改原有句子。
+
+编辑器顶部「✦ 生成 ASR 底稿」可重跑当前录音。ASR 较慢，建议先在 `.env` 配置好单独的 Python 环境：
+
+```ini
+ASR_PYTHON=/path/to/venv/bin/python
+AUTO_ASR=1
+```
+
+不想自动识别时设 `AUTO_ASR=0`，仍会生成音频和波形。
