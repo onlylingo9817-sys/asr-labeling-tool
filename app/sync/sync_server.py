@@ -69,6 +69,16 @@ def api(path, method='GET', body=None, retry=True):
             refresh_token(); return api(path, method, body, retry=False)
         raise RuntimeError(f'HTTP {e.code}: {e.read().decode()[:800]}')
 
+
+def _user_id(value):
+    """Label Studio returns completed_by as either an int or {"id": int}."""
+    if isinstance(value, dict):
+        return value.get('id')
+    return value
+
+def is_mine(annotation):
+    return _user_id(annotation.get('completed_by')) == 1
+
 def _region(rid, start, end, from_name, kind, value):
     return {'id':rid,'from_name':from_name,'to_name':'audio','type':kind,
             'value':{'start':start,'end':end,'channel':0,**value}}
@@ -230,7 +240,7 @@ def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=Fals
     if ann_rows:
         result=plan['annotationResult']
         anns=api(f'/api/tasks/{task_id}/annotations/') or []
-        mine=[a for a in anns if (a.get('completed_by') or {}).get('id')==1]
+        mine=[a for a in anns if is_mine(a)]
         # Our "mine" test uses the API's latest completed_by. If the API only
         # exposes a legacy task_completion row, don't assume ownership.
         if anns and task_id in READ_ONLY_ANNOTATION_TASKS and replace_annotation:
@@ -238,10 +248,11 @@ def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=Fals
                 f'task {task_id} 已有正式人工标注，同步服务默认只读；'
                 '若确需覆盖，请以 ALLOW_TASK5_REPLACE=1 重启服务并显式确认。')
         if not mine and tagged and mode!='all':
-            # tags alone are not a complete annotation; keep them in Prediction
-            # rather than silently marking the task as finished.
+            # A task with no Annotation yet: tags belong in the Prediction,
+            # together with all other unconfirmed rows. Never drop them.
             plan['taggedNotInAnnotation']=True
             ann_rows=[]
+            pending=[r for r in rows if r.get('confidence') not in CONFIRMED]
         if ann_rows and mine:
             ann_id=mine[0]['id']
             if replace_annotation:
@@ -466,7 +477,9 @@ class Handler(BaseHTTPRequestHandler):
         except PermissionError as e:
             self._send(409, {'ok':False,'error':str(e),'code':'annotation_conflict'})
         except Exception as e:
-            self._send(500, {'ok':False,'error':str(e)})
+            import traceback
+            traceback.print_exc()
+            self._send(500, {'ok':False,'error':str(e),'trace':traceback.format_exc(limit=4)})
 
 if __name__=='__main__':
     os.chdir(ROOT)

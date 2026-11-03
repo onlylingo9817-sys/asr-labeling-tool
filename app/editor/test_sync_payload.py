@@ -1,8 +1,8 @@
 """Offline regression tests for sync payload and merge semantics."""
 import json, sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[2]
-sys.path.insert(0,str(ROOT/'app'/'sync'))
+ROOT=Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0,str(ROOT/'work'))
 import sync_server
 
 def test_parent_and_nested_regions():
@@ -35,5 +35,23 @@ def test_invalid_piece():
     except ValueError: print('test_invalid_piece OK')
     else: raise AssertionError('outside-piece was accepted')
 
+def test_tag_merge_preserves_speaker():
+    existing=[
+      {'id':'s1','from_name':'speaker','to_name':'audio','type':'labels','value':{'start':1,'end':2,'channel':0,'labels':['SALES_1']}},
+      {'id':'s1','from_name':'text','to_name':'audio','type':'textarea','value':{'start':1,'end':2,'channel':0,'text':['old']}}]
+    rows=[{'start':1,'end':2,'bodyText':'old','speaker':'UNKNOWN','confidence':'low','tags':['overlap'],
+           'pieces':[{'start':1,'end':2,'text':'old','isInterjection':False}]}]
+    out,ch,ad=sync_server.merge_into_annotation(existing,rows)
+    assert any(x['from_name']=='speaker' and x['value']['labels']==['SALES_1'] for x in out)
+    assert any(x['from_name']=='tags' and x['value']['choices']==['overlap'] for x in out)
+    print('test_tag_merge_preserves_speaker OK')
+
+def test_completed_by_shapes():
+    assert sync_server.is_mine({'completed_by':1})
+    assert sync_server.is_mine({'completed_by':{'id':1}})
+    assert not sync_server.is_mine({'completed_by':{'id':2}})
+    assert not sync_server.is_mine({})
+    print('test_completed_by_shapes OK')
+
 if __name__=='__main__':
-    test_parent_and_nested_regions(); test_pending_only(); test_invalid_piece()
+    test_parent_and_nested_regions(); test_pending_only(); test_invalid_piece(); test_tag_merge_preserves_speaker(); test_completed_by_shapes()
