@@ -1,8 +1,8 @@
 """Offline regression tests for sync payload and merge semantics."""
 import json, sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0,str(ROOT/'work'))
+ROOT=Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(ROOT/'app'/'sync'))
 import sync_server
 
 def test_parent_and_nested_regions():
