@@ -3,7 +3,7 @@
 > 生成时间：2026-11-03 19:50 CST
 > 项目目录：`/Users/mi/Documents/Codex/2026-11-03/lu`
 > 发布仓库：https://github.com/onlylingo9817-sys/asr-labeling-tool
-> 最新提交：`29b1026 Add session handoff notes`
+> 最新提交：`906e80c Improve voiceprint grouping, dynamic audio lookup and editor responsiveness`
 
 新会话请先读完本文件，再按“当前服务状态 → 待人工确认事项 → 已验证功能 → 操作约束”执行。
 
@@ -304,7 +304,7 @@ N90 最近重新生成了 ASR：
 
 - 目录：`dist/asr-labeling-tool`
 - GitHub 已推送
-- 最新发布提交：`29b1026`（本次声纹修复尚未提交）
+- 最新发布提交：`906e80c`
 
 已比对：
 
@@ -357,4 +357,4 @@ N90 最近重新生成了 ASR：
 4. 如需复用旧 194 句标签，先按“自动建议/待核”迁移，不要标为人工确认。
 5. 在明确批准后执行 task 6 真实同步；同步前自动备份，同步后检查 tags/region 可见性。
 6. 按需执行 ASR 重生成、重置为底稿回归（都会改当前本地数据，执行前确认备份）。
-7. 验证发布版动态音频映射；本次修复尚未提交，当前 GitHub `main` 仍是 `29b1026`。
+7. 发布版已包含本次全部改动（GitHub `main` = `906e80c`），可直接拉取使用。
