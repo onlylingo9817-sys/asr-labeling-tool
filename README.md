@@ -7,7 +7,7 @@
 默认只启动编辑器，自带 12 秒合成示例音频，不包含任何客户录音。
 
 ```bash
-git clone <你的私有仓库地址>
+git clone https://github.com/onlylingo9817-sys/asr-labeling-tool.git
 cd asr-labeling-tool
 ./scripts/start_all.sh
 ```
@@ -17,6 +17,8 @@ cd asr-labeling-tool
 停止：`./scripts/stop_all.sh`，状态：`./scripts/status.sh`
 
 > 启动脚本使用 macOS `screen`。Linux 可自行把它替换为 systemd/tmux；不能依赖后台 PID 在终端退出后继续存活。
+>
+> Windows 目前没有一键启动脚本：安装 Python 3 后，可运行 `python app\editor\serve_editor.py --port 8765`，再打开 http://127.0.0.1:8765/ 。
 
 ## 换成自己的录音
 
