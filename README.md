@@ -9,6 +9,7 @@
 ```bash
 git clone https://github.com/onlylingo9817-sys/asr-labeling-tool.git
 cd asr-labeling-tool
+./scripts/doctor.sh
 ./scripts/start_all.sh
 ```
 
@@ -52,13 +53,14 @@ python app/interjection_nested.py --audio my.wav --out my_nested.json
 3. 在 `.env` 设置 `ENABLE_SYNC=1`，必要时设置 `LABEL_STUDIO_URL`、`LS_BIN`、`LS_READ_ONLY_TASKS`
 4. `./scripts/start_all.sh`
 
-写回规则：
+同步规则（当前版本）：
 
-- 人工确认（`manual/reference` 或 `reviewed=true`）→ Annotation
-- 机器待定 → Prediction
-- 已有 Annotation 不静默覆盖，页面会提示再次确认
-- 每次写回前自动备份数据库
+- 点一次同步，就把编辑器当前全部句子覆盖写入 Annotation
+- 已选标签会一起写回，标签值是英文 `overlap / accent / unclear / cut`
+- 没有 Annotation 时创建，已有 Annotation 时覆盖
+- 写回前自动备份数据库
 - 嵌套插话按自己的起止时间和说话人写成独立 region
+- 项目 ID 与 task 实际所属项目不一致时拒绝写回
 
 ## 声纹分组（可选，实验性）
 
