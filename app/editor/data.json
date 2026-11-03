@@ -1,0 +1,110 @@
+{
+  "title": "ASR 标注工具示例",
+  "recordings": [
+    {
+      "taskId": 1,
+      "label": "示例录音",
+      "audio": "audio/sample.wav",
+      "waveform": "waveforms/sample.png",
+      "lsAudio": "/data/upload/sample.wav",
+      "duration": 12.0,
+      "windows": [
+        {
+          "name": "front",
+          "start": 0,
+          "end": 12
+        }
+      ],
+      "utterances": [
+        {
+          "id": "sample-0001",
+          "start": 0.5,
+          "end": 4.2,
+          "text": "这是销售第一句话，",
+          "bodyText": "这是销售第一句话，",
+          "pieces": [
+            {
+              "text": "这是销售第一句话，",
+              "start": 0.5,
+              "end": 4.2,
+              "isInterjection": false,
+              "speaker": "SALES_1"
+            }
+          ],
+          "speaker": "SALES_1",
+          "speakerSource": "manual",
+          "speakerConfidence": "manual",
+          "reviewed": true,
+          "isInterjection": false,
+          "hasInterjection": false,
+          "tags": [],
+          "grade": "likely",
+          "displayLabel": "人工确认",
+          "window": "front"
+        },
+        {
+          "id": "sample-0002",
+          "start": 4.4,
+          "end": 6.0,
+          "text": "中间顾客插话，",
+          "bodyText": "中间顾客插话，",
+          "pieces": [
+            {
+              "text": "中间顾客插话，",
+              "start": 4.4,
+              "end": 6.0,
+              "isInterjection": false,
+              "speaker": "CUSTOMER_1"
+            }
+          ],
+          "speaker": "CUSTOMER_1",
+          "speakerSource": "manual",
+          "speakerConfidence": "manual",
+          "reviewed": true,
+          "isInterjection": false,
+          "hasInterjection": false,
+          "tags": [
+            "overlap"
+          ],
+          "grade": "risky",
+          "displayLabel": "人工确认",
+          "window": "front"
+        },
+        {
+          "id": "sample-0003",
+          "start": 6.2,
+          "end": 10.0,
+          "text": "这是销售第二句话嗯，",
+          "bodyText": "这是销售第二句话，",
+          "pieces": [
+            {
+              "text": "这是销售第二句话，",
+              "start": 6.2,
+              "end": 8.9,
+              "isInterjection": false,
+              "speaker": "SALES_1"
+            },
+            {
+              "text": "嗯，",
+              "start": 9.1,
+              "end": 9.4,
+              "isInterjection": true,
+              "speaker": "CUSTOMER_1"
+            }
+          ],
+          "speaker": "SALES_1",
+          "speakerSource": "manual",
+          "speakerConfidence": "manual",
+          "reviewed": true,
+          "isInterjection": false,
+          "hasInterjection": true,
+          "tags": [],
+          "grade": "risky",
+          "displayLabel": "人工确认",
+          "window": "front"
+        }
+      ]
+    }
+  ],
+  "syncEndpoint": "http://127.0.0.1:8768/sync"
+}
