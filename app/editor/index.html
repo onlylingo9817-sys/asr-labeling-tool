@@ -142,7 +142,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
   </label>
   <button id="mergeNow" title="立即按规则合并当前语音">⇉ 立即合并</button>
   <button id="undo" title="撤销上一步（⌘Z）">↶ 撤销</button>
-  <button id="redo" title="重做（⇧⌘Z）">↷ 重做</button>
+  <button id="redo" title="重做（⇧⌘Z；需先撤销一步）">↷ 重做</button>
   <button id="export">导出 Label Studio JSON</button>
 
   <div class="minibar" id="minibar" hidden>
@@ -578,6 +578,7 @@ function splitPiece(i, pieceIdx){
   const target=pieces[pieceIdx];
   const before=pieces.slice(0,pieceIdx);
   const after=pieces.slice(pieceIdx+1);
+  if(!before.length && !after.length) return;
   snapshot();
   const mk=(ps)=>{
     if(!ps.length) return null;
@@ -933,9 +934,8 @@ async function syncToLabelStudio(){
 $('#undo').addEventListener('click',undo);
 $('#redo').addEventListener('click',redo);
 $('#mergeNow').addEventListener('click',()=>{
-  snapshot();
   const n=autoMergeSameSpeaker();
-  if(!n){ undoStack.pop(); updateHistoryButtons(); alert('没有符合“同一说话人、间隔≤1秒、无嵌套插话”的相邻句。'); }
+  if(!n) alert('没有符合“同一说话人、间隔≤1秒、无嵌套插话”的相邻句。');
 });
 const autoMergeBox=$('#autoMerge');
 if(autoMergeBox){
@@ -968,6 +968,7 @@ function setPieceSpeaker(i,pieceIdx,role){
 $('#list').addEventListener('change',e=>{
   const i=+e.target.dataset.i;
   if(e.target.classList.contains('sp')){
+    snapshot();
     const u=data.utterances[i];
     u.speaker=e.target.value;
     confirmRow(u,'人工确认');
@@ -984,10 +985,17 @@ $('#list').addEventListener('change',e=>{
     setPieceSpeaker(i,+e.target.dataset.idx,e.target.value);
   }
 });
+$('#list').addEventListener('focusin',e=>{
+  if(e.target.classList && e.target.classList.contains('txt')) e.target.dataset.historyMark='0';
+});
 $('#list').addEventListener('input',e=>{
   if(!e.target.classList.contains('txt'))return;
   const i=+e.target.dataset.i;
   const u=data.utterances[i];
+  if(e.target.dataset.historyMark!=='1'){
+    snapshot();
+    e.target.dataset.historyMark='1';
+  }
   // The visible textarea is the body only. Nested interjections stay separate.
   u.bodyText=e.target.value;
   const pieces=normalizedPieces(u);
@@ -1012,6 +1020,7 @@ $('#list').addEventListener('click',e=>{
   const cand=e.target.closest('.candBtn');
   if(cand){
     e.stopPropagation();
+    snapshot();
     const i=+cand.dataset.i, role=cand.dataset.role;
     const u=data.utterances[i];
     u.speaker=role;
@@ -1031,6 +1040,7 @@ $('#list').addEventListener('click',e=>{
   if(btn.classList.contains('split')){ splitAt(i); return; }
   if(btn.classList.contains('merge')){ mergeWithNext(i); return; }
   if(btn.dataset.quick){
+    snapshot();
     u.speaker = btn.dataset.quick==='customer' ? 'CUSTOMER_1' : 'UNKNOWN';
     confirmRow(u);
     if(btn.dataset.quick==='customer' && !u.tags.includes('overlap')) u.tags.push('overlap');
@@ -1038,6 +1048,7 @@ $('#list').addEventListener('click',e=>{
     return;
   }
   const k=btn.dataset.tag;
+  snapshot();
   u.tags=u.tags.includes(k)?u.tags.filter(x=>x!==k):[...u.tags,k];
   btn.classList.toggle('on',u.tags.includes(k));
   persist();
@@ -1057,6 +1068,7 @@ document.addEventListener('keydown',e=>{
   else if(e.key>='1'&&e.key<='9'&&active>=0){
     const idx=+e.key;
     const role=idx<=4?`SALES_${idx}`:`CUSTOMER_${idx-4}`;
+    snapshot();
     const u=data.utterances[active];
     u.speaker=role; confirmRow(u);
     persist(); render(); seekTo(active);
@@ -1077,18 +1089,21 @@ document.addEventListener('keydown',e=>{
     e.preventDefault(); $('#loop').click();
   }
   else if((e.key==='c'||e.key==='C') && active>=0){
+    snapshot();
     const u=data.utterances[active];
     u.speaker='CUSTOMER_1'; confirmRow(u);
     if(!u.tags.includes('overlap')) u.tags.push('overlap');
     persist(); render(); seekTo(active);
   }
   else if((e.key==='u'||e.key==='U') && active>=0){
+    snapshot();
     const u=data.utterances[active];
     u.speaker='UNKNOWN'; confirmRow(u);
     persist(); render(); seekTo(active);
   }
   else if(e.key==='Enter'&&active>=0){
     e.preventDefault();
+    snapshot();
     data.utterances[active].reviewed=true;
     data.utterances[active].speakerConfidence='manual';
     data.utterances[active].speakerSource='manual';
