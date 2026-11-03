@@ -178,5 +178,6 @@ def build_asr_recording(audio: Path, task_id: int, duration: float | None = None
     payload = run_asr(audio)
     duration = duration or float(payload.get('duration') or probe_duration(audio))
     rows, windows = asr_utterances(payload, task_id, duration)
+    counts = {w['name']: sum(1 for r in rows if r.get('window') == w['name']) for w in windows}
     return {'duration': round(duration, 3), 'windows': windows, 'utterances': rows,
-            'engine': payload.get('engine', 'FunASR')}
+            'windowCounts': counts, 'engine': payload.get('engine', 'FunASR')}

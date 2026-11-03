@@ -523,7 +523,8 @@ class Handler(BaseHTTPRequestHandler):
                 rec['utterances']=result['utterances']
                 data_path.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8')
                 return self._send(200,{'ok':True,'taskId':task_id,'sentences':len(result['utterances']),
-                                       'windows':len(result['windows'])})
+                                       'windows':len(result['windows']),
+                                       'windowCounts':result.get('windowCounts',{})})
             if self.path.startswith('/sync'):
                 # A project id is required for new multi-project clients. It is
                 # optional for old local data whose recordings have no projectId.

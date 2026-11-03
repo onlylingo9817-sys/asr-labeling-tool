@@ -348,11 +348,16 @@ async function runASR(){
       body:JSON.stringify({projectId:data.projectId,taskId:data.taskId})});
     const out=await res.json();
     if(!res.ok||!out.ok) throw new Error(out.error||('HTTP '+res.status));
+    // Discard the old browser draft: the ASR result must become the visible
+    // editor state immediately, otherwise it looks like nothing was generated.
+    localStorage.removeItem(editorKey(data.taskId,data.projectId));
     const fresh=await (await fetch('data.json?_='+Date.now())).json();
     bundle.recordings=fresh.recordings;
     populateRecordings();
-    setSyncStatus(`ASR 完成：${out.sentences} 句，${out.windows} 个窗口`);
-    alert(`ASR 完成\n${out.sentences} 句，${out.windows} 个窗口`);
+    const wc=out.windowCounts||{};
+    const wa=Object.entries(wc).map(([k,v])=>`${({front:'前段',middle:'中段',tail:'尾段'})[k]||k}=${v}`).join('，');
+    setSyncStatus(`ASR 完成：${out.sentences} 句；${wa||out.windows+' 个窗口'}`);
+    alert(`ASR 完成\n${out.sentences} 句\n${wa||out.windows+' 个窗口'}\n旧本地草稿已清除，页面已载入新结果。`);
   }catch(e){ setSyncStatus('ASR 失败：'+e.message,true); alert('ASR 失败：'+e.message); }
   finally{ btn.disabled=false; btn.textContent=old; }
 }
@@ -441,7 +446,10 @@ function renderFilters(){
   mk('只看待核',"__TODO__");
   mk('只看插话',"__INTERJ__");
   mk('只看待听句',"__RISKY__");
-  for(const w of wins) mk(`${({front:'前段',middle:'中段',tail:'尾段'})[w.name]||w.name} ${fmt(w.start)}–${fmt(w.end)}`,w.name);
+  for(const w of wins){
+    const count=data.utterances.filter(u=>u.window===w.name).length;
+    mk(`${({front:'前段',middle:'中段',tail:'尾段'})[w.name]||w.name} ${fmt(w.start)}–${fmt(w.end)}${count?' ('+count+')':' (空白)'}`,w.name);
+  }
   const done=data.utterances.filter(isConfirmed).length;
   const b=document.createElement('span');b.className='sub';b.style.alignSelf='center';b.textContent=`已确认 ${done}/${data.utterances.length}`;el.appendChild(b);
 }
