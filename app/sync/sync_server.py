@@ -518,6 +518,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not rec: raise ValueError('task not found in local editor data')
                 if not build_asr_recording: raise RuntimeError('ASR 模块未安装')
                 audio_path=data_path.parent/rec['audio']
+                # Always allow regeneration; keep a copy of the previous editor
+                # state so a bad ASR run can be recovered without relying only
+                # on browser localStorage.
+                BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+                stamp=time.strftime('%Y%m%d-%H%M%S')
+                shutil.copyfile(data_path, BACKUP_DIR/f'editor-task{task_id}-{stamp}-before-asr.json')
                 result=build_asr_recording(audio_path,task_id,float(rec.get('duration') or 0))
                 rec['duration']=result['duration']; rec['windows']=result['windows']
                 rec['utterances']=result['utterances']
