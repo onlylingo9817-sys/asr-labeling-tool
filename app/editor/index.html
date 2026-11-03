@@ -109,6 +109,16 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
 .vpSample .txt{font-size:12px;color:#334155;flex:1;min-width:180px}
 .vpGroup select{font:inherit;padding:5px 8px;border-radius:8px;border:1px solid var(--line)}
 .vpGroup .apply{background:var(--blue);color:#fff;border-color:var(--blue);border-radius:8px;padding:6px 10px}
+.vpGroup.done{border-color:#b6e3c2;background:#f6fcf8}
+.vpGroupHead .meta{font-size:12px;color:var(--muted)}
+.vpGroupHead .meta b{color:var(--green)}
+.vpOpts{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:2px 0 8px}
+.vpOpts label{display:flex;align-items:center;gap:4px}
+.vpPlay{width:30px;height:30px;padding:0;border-radius:50%;flex:none}
+.vpSample .when{font-variant-numeric:tabular-nums;color:#94a3b8;font-size:11px;min-width:96px}
+.vpMore{font-size:12px;padding:3px 9px}
+.vpResult{font-size:12px;color:var(--green)}
+.vpHint{font-size:12px;color:var(--muted);margin-top:6px}
 .vpNote{font-size:12px;color:#8a4b0f;background:#fff8e8;border:1px solid #f0d69b;border-radius:9px;padding:9px 11px;margin-top:12px}
 .notice{background:#fff8e8;border:1px solid #f0d69b;border-radius:9px;padding:9px 11px;font-size:12px;color:#6b4a12;margin-bottom:12px}
 @media(max-width:900px){.wrap{grid-template-columns:1fr}.side{position:static}.row{grid-template-columns:58px 88px minmax(0,1fr)}}
@@ -133,6 +143,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
   </div>
   <div class="spacer"></div>
   <button id="voiceBtn" title="声纹总配置：首次初始化、登记样本、批量定人">🎙 声纹配置</button>
+  <label class="autoMergeWrap" title="只把前/中/尾三段窗口内的句子写回 Label Studio"><input type="checkbox" id="winOnly" checked> 仅同步三段内</label>
   <button id="sync" class="primary" title="把当前语音的校对结果写回 Label Studio">↥ 同步到 Label Studio</button>
   <button id="prev">↑ 上一句</button>
   <button id="play">▶ 播放当前句</button>
@@ -229,7 +240,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
     </div>
     <div class="modalBody">
       <div class="vpRow">
-        <div class="vpStep"><b>1</b> 分组（机器按声纹自动分组，通常会多分；以试听为准）</div>
+        <div class="vpStep"><b>1</b> 分组（按声纹聚类；先听每组样本再选角色。“高置信”句子直接确认，其余只作为待核建议）</div>
         <div class="vpControls">
           <label class="sub">本通顾客人数
             <select id="vpCustomers">
@@ -241,6 +252,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
             </select>
           </label>
           <label class="sub"><input type="checkbox" id="vpCarVoice"> 有车机语音</label>
+          <label class="sub">范围 <select id="vpScope"><option value="all">全部句子</option><option value="win">仅三段窗口内</option></select></label>
           <button id="vpGroup" class="primary">开始分组</button>
           <span class="sub" id="vpStatus"></span>
         </div>
@@ -326,6 +338,10 @@ function populateRecordings(){
   sel.onchange=()=>{flushPersist(); loadRecording(+sel.value);};
   loadRecording(+pick.taskId);
 }
+function windowOf(start,end){
+  const mid=(start+end)/2;
+  return ((data&&data.windows)||[]).find(w=>w.start<=mid&&mid<w.end)?.name||'full';
+}
 function addUtterance(){
   if(!data || !data.taskId){ alert('请先在 Label Studio 里建 task，或选择一个已有录音。'); return; }
   snapshot();
@@ -335,7 +351,7 @@ function addUtterance(){
   data.utterances.push({id:`${data.taskId}-manual-${Date.now()}`,start,end,text:'',bodyText:'',
     pieces:[{text:'',start,end,isInterjection:false,speaker:'UNKNOWN',speakerConfidence:'low',speakerSource:'auto',reviewed:false}],
     speaker:'UNKNOWN',speakerSource:'auto',speakerConfidence:'low',reviewed:false,
-    isInterjection:false,hasInterjection:false,tags:[],grade:'unknown',displayLabel:'待核',window:'full'});
+    isInterjection:false,hasInterjection:false,tags:[],grade:'unknown',displayLabel:'待核',window:windowOf(start,end)});
   persist(); render(); seekTo(data.utterances.length-1);
 }
 async function runASR(){
@@ -476,7 +492,7 @@ function renderFilters(){
   const el=$('#filters'); if(!el) return;
   const wins=data.windows||[];
   el.innerHTML='';
-  const mk=(label,val)=>{const b=document.createElement('button');b.className='chip'+(window._filter===val?' on':'');b.textContent=label;b.onclick=()=>{window._filter=val;renderFilters();render();};el.appendChild(b);};
+  const mk=(label,val)=>{const b=document.createElement('button');b.className='chip'+(window._filter===val?' on':'');b.textContent=label;b.onclick=()=>{window._filter=(val==='__VPGROUP__')?undefined:val;renderFilters();render();};el.appendChild(b);};
   mk('全部',undefined);
   mk('只看待核',"__TODO__");
   mk('只看插话',"__INTERJ__");
@@ -485,6 +501,12 @@ function renderFilters(){
     const count=data.utterances.filter(u=>u.window===w.name).length;
     mk(`${({front:'前段',middle:'中段',tail:'尾段'})[w.name]||w.name} ${fmt(w.start)}–${fmt(w.end)}${count?' ('+count+')':' (空白)'}`,w.name);
   }
+  if(wins.length){
+    const inWin=data.utterances.filter(u=>u.window&&u.window!=='full').length;
+    const outWin=data.utterances.length-inWin;
+    if(inWin&&outWin){ mk(`窗口内 (${inWin})`,'__INWIN__'); mk(`窗口外 (${outWin})`,'__OUTWIN__'); }
+  }
+  if(window._filter==='__VPGROUP__') mk(`声纹分组（${window._vpFilterIds?.size||0} 句）✕`,'__VPGROUP__');
   const done=data.utterances.filter(isConfirmed).length;
   const b=document.createElement('span');b.className='sub';b.style.alignSelf='center';b.textContent=`已确认 ${done}/${data.utterances.length}`;el.appendChild(b);
 }
@@ -496,16 +518,37 @@ function speakerOptions(current){
 function pieceLabel(p){
   return p.speaker && p.speaker!=='UNKNOWN' ? p.speaker : '插话待核';
 }
+function rowVisible(u){
+  const f=window._filter;
+  if(!f) return true;
+  if(f==='__TODO__') return !isConfirmed(u) && (u.speaker==='UNKNOWN' || u.speakerConfidence==='low');
+  if(f==='__INTERJ__') return !!(u.hasInterjection || u.isInterjection);
+  if(f==='__RISKY__') return u.grade==='risky';
+  if(f==='__INWIN__') return !!u.window && u.window!=='full';
+  if(f==='__OUTWIN__') return !u.window || u.window==='full';
+  if(f==='__VPGROUP__') return !!window._vpFilterIds && window._vpFilterIds.has(u.id);
+  return u.window===f;
+}
 function render(){
   const list=$('#list'); if(!data) return; list.innerHTML='';
-  const visible=data.utterances.map((u,i)=>({u,i})).filter(({u})=>{
-    if(!window._filter) return true;
-    if(window._filter==='__TODO__') return !isConfirmed(u) && (u.speaker==='UNKNOWN' || u.speakerConfidence==='low');
-    if(window._filter==='__INTERJ__') return !!(u.hasInterjection || u.isInterjection);
-    if(window._filter==='__RISKY__') return u.grade==='risky';
-    return u.window===window._filter;
-  });
-  visible.forEach(({u,i})=>{
+  const frag=document.createDocumentFragment();
+  data.utterances.forEach((u,i)=>{ if(rowVisible(u)) frag.appendChild(buildRow(u,i)); });
+  list.appendChild(frag);
+  autoGrowAll();
+  updateSide();
+}
+function refreshRow(i){
+  const u=data.utterances[i]; if(!u) return;
+  const old=document.querySelector(`#list .row[data-i="${i}"]`);
+  if(!rowVisible(u)){ old?.remove(); renderFilters(); updateSide(); return; }
+  if(!old){ render(); renderFilters(); return; }
+  const fresh=buildRow(u,i);
+  old.replaceWith(fresh);
+  const box=fresh.querySelector('.txt');
+  if(box){ box.style.height='auto'; box.style.height=Math.max(28,box.scrollHeight)+'px'; }
+  renderFilters(); updateSide();
+}
+function buildRow(u,i){
     const row=document.createElement('div');
     row.className='row'+(isConfirmed(u)?' reviewed':'')+(i===active?' active':'');
     row.dataset.i=i;
@@ -532,10 +575,7 @@ function render(){
         </div>
       </div>`;
     row.addEventListener('click',e=>{if(e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='BUTTON')return; seekTo(i);});
-    list.appendChild(row);
-  });
-  autoGrowAll();
-  updateSide();
+    return row;
 }
 
 // Auto-merge adjacent rows when they share a speaker and the gap is <= 1s.
@@ -829,6 +869,18 @@ audio.addEventListener('timeupdate',()=>{
   if(audio.currentTime>u.end+0.15){ audio.currentTime=u.start; audio.play(); }
 });
 
+audio.addEventListener('timeupdate',()=>{
+  if(!data||loopSentence||audio.paused||!data.utterances.length) return;
+  const t=audio.currentTime, us=data.utterances;
+  if(active>=0 && us[active] && t>=us[active].start && t<us[active].end) return;
+  let lo=0,hi=us.length-1,found=-1;
+  while(lo<=hi){const mid=(lo+hi)>>1; if(us[mid].start<=t){found=mid;lo=mid+1;}else hi=mid-1;}
+  if(found<0||found===active||t>=us[found].end+0.4) return;
+  active=found;
+  document.querySelectorAll('#list .row').forEach(r=>r.classList.toggle('active',+r.dataset.i===found));
+  document.querySelector('#list .row.active')?.scrollIntoView({block:'nearest',behavior:'smooth'});
+  updateSide();
+});
 let scrubbing=false;
 let miniScrubbing=false;
 const seek=$('#seek');
@@ -920,8 +972,8 @@ $('#next').addEventListener('click',()=>seekTo(active+1));
 $('#play').addEventListener('click',()=>{if(active<0)seekTo(0);audio.play()});
 $('#export').addEventListener('click',exportLabels);
 $('#sync').addEventListener('click',syncToLabelStudio);
-function syncRows(){
-  return data.utterances.map(u=>({
+function syncRows(list=data.utterances){
+  return list.map(u=>({
     start:round3(u.start),end:round3(u.end),
     text:(u.bodyText||u.text||'').replace(/，$/,''),
     bodyText:(u.bodyText||u.text||'').replace(/，$/,''),
@@ -938,10 +990,14 @@ function syncRows(){
 async function syncToLabelStudio(){
   const btn=$('#sync');
   flushPersist();
-  const rows=syncRows();
+  const winOnly=!!$('#winOnly')?.checked && (data.windows||[]).length>0;
+  const source=winOnly?data.utterances.filter(u=>u.window&&u.window!=='full'):data.utterances;
+  const outside=data.utterances.length-source.length;
+  if(!source.length){ alert('三段窗口内没有句子可同步。取消勾选“仅同步三段内”可同步全部。'); return; }
+  const rows=syncRows(source);
   const tagged=rows.filter(r=>(r.tags||[]).length).length;
   const tagKeys=[...new Set(rows.flatMap(r=>r.tags||[]))];
-  if(!confirm(`将把当前 ${rows.length} 句完整状态覆盖写入 task ${data.taskId}（项目 ${data.projectId}）。\n其中 ${tagged} 句有标签：${tagKeys.length?tagKeys.join(', '):'无'}\n写回前自动备份数据库。继续？`)) return;
+  if(!confirm(`将把当前 ${rows.length} 句完整状态覆盖写入 task ${data.taskId}（项目 ${data.projectId}）。${outside?`\n（按“仅同步三段内”设置，不含窗口外 ${outside} 句）`:''}\n其中 ${tagged} 句有标签：${tagKeys.length?tagKeys.join(', '):'无'}\n写回前自动备份数据库。继续？`)) return;
   btn.disabled=true; const old=btn.textContent; btn.textContent='同步中…';
   setSyncStatus('正在覆盖写回…');
   try{
@@ -981,6 +1037,11 @@ $('#mergeNow').addEventListener('click',()=>{
   const n=autoMergeSameSpeaker();
   if(!n) alert('没有符合“同一说话人、间隔≤1秒、无嵌套插话”的相邻句。');
 });
+const winOnlyBox=$('#winOnly');
+if(winOnlyBox){
+  winOnlyBox.checked=localStorage.getItem('asr-winonly')!=='0';
+  winOnlyBox.addEventListener('change',()=>localStorage.setItem('asr-winonly',winOnlyBox.checked?'1':'0'));
+}
 const autoMergeBox=$('#autoMerge');
 if(autoMergeBox){
   autoMergeBox.checked=localStorage.getItem('asr-automerge')!=='0';
@@ -1007,7 +1068,7 @@ function setPieceSpeaker(i,pieceIdx,role){
   u.pieces=pieces;
   u.bodyText=pieces.filter(x=>!x.isInterjection).map(x=>x.text||'').join('');
   u.hasInterjection=pieces.some(x=>x.isInterjection);
-  persist(); render(); setSyncStatus(`插话 ${fmtMs(p.start)} 已设为 ${role}`);
+  persist(); refreshRow(i); setSyncStatus(`插话 ${fmtMs(p.start)} 已设为 ${role}`);
 }
 $('#list').addEventListener('change',e=>{
   const i=+e.target.dataset.i;
@@ -1022,7 +1083,7 @@ $('#list').addEventListener('change',e=>{
     conf.className='conf';
     const row=e.target.closest('.row'); row?.classList.add('reviewed');
     persist();
-    render(); seekTo(i);   // re-render so summary/progress and speaker option stay in sync
+    refreshRow(i); seekTo(i);
     return;
   }
   if(e.target.classList.contains('pieceSp')){
@@ -1069,7 +1130,7 @@ $('#list').addEventListener('click',e=>{
     const u=data.utterances[i];
     u.speaker=role;
     confirmRow(u,'人工确认');
-    persist(); render(); seekTo(i);
+    persist(); refreshRow(i); seekTo(i);
     return;
   }
   const splitBtn=e.target.closest('.splitPiece');
@@ -1088,7 +1149,7 @@ $('#list').addEventListener('click',e=>{
     u.speaker = btn.dataset.quick==='customer' ? 'CUSTOMER_1' : 'UNKNOWN';
     confirmRow(u);
     if(btn.dataset.quick==='customer' && !u.tags.includes('overlap')) u.tags.push('overlap');
-    persist(); render(); seekTo(i);
+    persist(); refreshRow(i); seekTo(i);
     return;
   }
   const k=btn.dataset.tag;
@@ -1115,7 +1176,7 @@ document.addEventListener('keydown',e=>{
     snapshot();
     const u=data.utterances[active];
     u.speaker=role; confirmRow(u);
-    persist(); render(); seekTo(active);
+    persist(); refreshRow(active); seekTo(active);
   }
   else if((e.key==='s'||e.key==='S') && active>=0){
     e.preventDefault(); splitAt(active);
@@ -1137,13 +1198,13 @@ document.addEventListener('keydown',e=>{
     const u=data.utterances[active];
     u.speaker='CUSTOMER_1'; confirmRow(u);
     if(!u.tags.includes('overlap')) u.tags.push('overlap');
-    persist(); render(); seekTo(active);
+    persist(); refreshRow(active); seekTo(active);
   }
   else if((e.key==='u'||e.key==='U') && active>=0){
     snapshot();
     const u=data.utterances[active];
     u.speaker='UNKNOWN'; confirmRow(u);
-    persist(); render(); seekTo(active);
+    persist(); refreshRow(active); seekTo(active);
   }
   else if(e.key==='Enter'&&active>=0){
     e.preventDefault();
@@ -1152,7 +1213,7 @@ document.addEventListener('keydown',e=>{
     data.utterances[active].speakerConfidence='manual';
     data.utterances[active].speakerSource='manual';
     data.utterances[active].displayLabel='人工确认';
-    persist(); render(); seekTo(active+1);
+    persist(); refreshRow(active); seekTo(active+1);
   }
 });
 function exportPayload(){
@@ -1223,84 +1284,141 @@ $('#voiceModal').addEventListener('click',e=>{if(e.target.id==='voiceModal')$('#
   const el=$(sel);
   if(el) el.addEventListener('change',()=>{localStorage.setItem('asr-scene',JSON.stringify(vpScene()));});
 });
-function vpClipAudio(sample){
-  const wrap=document.createElement('div');
-  const a=document.createElement('audio'); a.controls=true; a.preload='metadata'; a.src=data.audio;
-  a.addEventListener('play',()=>{ if(Math.abs(a.currentTime-sample.start)>0.2) a.currentTime=sample.start; });
-  a.addEventListener('timeupdate',()=>{ if(a.currentTime>sample.end+0.08) a.pause(); });
-  wrap.appendChild(a);
-  return wrap;
+let vpAudio=null, vpAudioSrc='', vpPlaying=null;
+function vpStop(){
+  if(vpAudio) vpAudio.pause();
+  if(vpPlaying){ vpPlaying.btn.textContent='▶'; vpPlaying=null; }
 }
-function vpRenderGroups(groups, rowsByCluster){
+function vpPlay(sample,btn){
+  if(vpPlaying && vpPlaying.btn===btn){ vpStop(); return; }
+  vpStop();
+  if(!vpAudio){
+    vpAudio=new Audio(); vpAudio.preload='auto';
+    vpAudio.addEventListener('timeupdate',()=>{ if(vpPlaying && vpAudio.currentTime>vpPlaying.end+0.08) vpStop(); });
+    vpAudio.addEventListener('ended',vpStop);
+  }
+  if(vpAudioSrc!==data.audio){ vpAudio.src=data.audio; vpAudioSrc=data.audio; }
+  vpPlaying={end:sample.end,btn}; btn.textContent='⏸';
+  const go=()=>{ vpAudio.currentTime=Math.max(0,sample.start-0.05); vpAudio.play().catch(()=>vpStop()); };
+  if(vpAudio.readyState>=1) go(); else vpAudio.addEventListener('loadedmetadata',go,{once:true});
+}
+$('#voiceClose').addEventListener('click',vpStop);
+function vpPickSamples(group,byId,n=3){
+  let pool=group.members.filter(m=>m.sure&&m.end-m.start>=1.2);
+  if(pool.length<n) pool=group.members.filter(m=>m.end-m.start>=0.8);
+  if(!pool.length) pool=group.members.slice();
+  pool=[...pool].sort(()=>Math.random()-0.5);
+  const out=[];
+  for(const m of pool){ if(out.length>=n) break; if(out.some(o=>Math.abs(o.start-m.start)<8)) continue; out.push(m); }
+  for(const m of pool){ if(out.length>=n) break; if(!out.includes(m)) out.push(m); }
+  return out.sort((x,y)=>x.start-y.start).map(m=>{
+    const u=byId.get(m.id); return {id:m.id,start:m.start,end:m.end,text:u?(u.bodyText||u.text||''):''};
+  });
+}
+function vpFillSamples(box,samples){
+  box.innerHTML='';
+  samples.forEach(sample=>{
+    const row=document.createElement('div'); row.className='vpSample';
+    const play=document.createElement('button'); play.className='vpPlay'; play.textContent='▶';
+    play.addEventListener('click',()=>vpPlay(sample,play));
+    const when=document.createElement('span'); when.className='when'; when.textContent=`${fmtMs(sample.start)}`;
+    const label=document.createElement('span'); label.className='txt'; label.textContent=sample.text||'（无文字）';
+    row.append(play,when,label); box.appendChild(row);
+  });
+}
+function vpRenderGroups(groups){
   window._vpGroups=groups;
+  const byId=new Map(data.utterances.map(u=>[u.id,u]));
   const box=$('#vpGroups'); box.innerHTML='';
+  const scene=vpScene();
+  const defaults=['SALES_1','CUSTOMER_1','CUSTOMER_2',scene.carVoice?'CAR_VOICE':'CUSTOMER_3','UNKNOWN','UNKNOWN'];
+  const totalSeconds=groups.reduce((a,g)=>a+g.seconds,0)||1;
   groups.forEach((g,idx)=>{
     const card=document.createElement('div'); card.className='vpGroup';
     const head=document.createElement('div'); head.className='vpGroupHead';
-    head.innerHTML=`<b>分组 ${idx+1}</b><span class="sub">${g.count} 句 · ${g.seconds} 秒</span>`;
+    head.innerHTML=`<b>分组 ${idx+1}</b><span class="meta">${g.count} 句 · ${g.seconds} 秒 · 高置信 <b>${g.sure}</b></span>`;
     const sel=document.createElement('select');
     VP_ROLES.forEach(r=>{const o=document.createElement('option');o.value=r;o.textContent=r;sel.appendChild(o);});
-    if(idx===0) sel.value='SALES_1'; else if(idx===1) sel.value='CUSTOMER_1';
-    const btn=document.createElement('button'); btn.className='apply'; btn.textContent='整组设为该角色';
-    btn.addEventListener('click',()=>vpApplyGroup(g.cluster,sel.value,btn,rowsByCluster));
-    head.appendChild(sel); head.appendChild(btn);
-    card.appendChild(head);
+    sel.value=(g.seconds/totalSeconds<0.04)?'UNKNOWN':(defaults[idx]||'UNKNOWN');
+    head.appendChild(sel); card.appendChild(head);
+    const opts=document.createElement('div'); opts.className='vpOpts';
+    const lowId=`vpLow${idx}`, enrollId=`vpEnroll${idx}`;
+    const lowCount=g.count-g.sure;
+    opts.innerHTML=`<label><input type="checkbox" id="${lowId}" ${lowCount?'checked':''} ${lowCount?'':'disabled'}> 同时给其余 ${lowCount} 句填入该角色（仅作待核建议）</label>
+      <label title="把本组高置信句登记为声纹样本，供以后录音识别使用"><input type="checkbox" id="${enrollId}"> 登记为声纹样本</label>`;
+    card.appendChild(opts);
     const samples=document.createElement('div');
-    g.samples.forEach(s=>{
-      const row=document.createElement('div'); row.className='vpSample';
-      row.appendChild(vpClipAudio(s));
-      const label=document.createElement('span'); label.className='txt';
-      label.textContent=`${fmtMs(s.start)}–${fmtMs(s.end)}　${s.text}`;
-      row.appendChild(label);
-      samples.appendChild(row);
-    });
+    vpFillSamples(samples,g.samples.map(x=>({...x,text:x.text||(byId.get(x.id)?.bodyText||'')})));
     card.appendChild(samples);
+    const actions=document.createElement('div'); actions.className='vpGroupHead'; actions.style.margin='8px 0 0';
+    const apply=document.createElement('button'); apply.className='apply'; apply.textContent=`整组设为该角色`;
+    const more=document.createElement('button'); more.className='vpMore'; more.textContent='换一批样本';
+    more.addEventListener('click',()=>vpFillSamples(samples,vpPickSamples(g,byId)));
+    const view=document.createElement('button'); view.className='vpMore'; view.textContent='在列表中查看本组';
+    view.addEventListener('click',()=>{
+      window._vpFilterIds=new Set(g.members.map(m=>m.id)); window._filter='__VPGROUP__';
+      $('#voiceModal').hidden=true; vpStop(); renderFilters(); render();
+    });
+    const result=document.createElement('span'); result.className='vpResult';
+    apply.addEventListener('click',()=>{
+      vpApplyGroup(g,sel.value,{includeLow:$('#'+lowId).checked,enroll:$('#'+enrollId).checked},card,result,apply);
+    });
+    actions.append(apply,more,view,result); card.appendChild(actions);
     box.appendChild(card);
   });
 }
-async function vpApplyGroup(cluster,role,btn,rowsByCluster){
-  btn.disabled=true; const old=btn.textContent; btn.textContent='应用中…';
-  try{
-    const rows=rowsByCluster[cluster]||[];
-    // Enroll only long, clean samples and tell the user how many actually were
-    // used; short interjections are excluded from the voiceprint centroid.
-    const enrollable=rows.filter(r=>r.end-r.start>=1.0).slice(0,12);
-    for(const r of enrollable){
-      await vpCall('/enroll',{role,taskId:data.taskId,start:r.start,end:r.end});
+function vpApplyGroup(group,role,opts,card,resultEl,btn){
+  const byId=new Map(data.utterances.map(u=>[u.id,u]));
+  snapshot();
+  let confirmed=0,suggested=0,skipped=0;
+  group.members.forEach(m=>{
+    const u=byId.get(m.id); if(!u) return;
+    if(isConfirmed(u)){ skipped++; return; }
+    if(m.sure){
+      u.speaker=role; confirmRow(u,'声纹整组确认'); confirmed++;
+    }else if(opts.includeLow){
+      u.speaker=role; u.speakerSource='auto'; u.speakerConfidence='low'; u.reviewed=false;
+      u.displayLabel='声纹建议'; suggested++;
     }
-    const byId=new Map(data.utterances.map(u=>[u.id,u]));
-    let changed=0;
-    rows.forEach(r=>{
-      const u=byId.get(r.id); if(!u) return;
-      u.speaker=role; u.speakerSource='manual'; u.speakerConfidence='manual';
-      u.reviewed=true; u.displayLabel='整组确认'; changed++;
-    });
-    persist(); render(); updateSide();
-    btn.textContent=`✓ 已设为 ${role}（${changed} 句，登记 ${enrollable.length} 个样本）`;
-  }catch(e){
-    btn.textContent='失败：'+e.message;
+  });
+  persist(); render(); updateSide(); renderFilters();
+  card.classList.add('done');
+  resultEl.textContent=`✓ ${role}：确认 ${confirmed} 句，建议 ${suggested} 句${skipped?`，跳过已确认 ${skipped} 句`:''}`;
+  btn.textContent='改设为所选角色';
+  if(opts.enroll){
+    const items=group.members.filter(m=>m.sure&&m.end-m.start>=1.0).slice(0,12).map(m=>({start:m.start,end:m.end}));
+    if(items.length) vpCall('/enroll',{role,taskId:data.taskId,projectId:data.projectId,items}).catch(()=>{});
   }
 }
 $('#vpGroup').addEventListener('click',async()=>{
-  const btn=$('#vpGroup'); btn.disabled=true; const old=btn.textContent; btn.textContent='分组中…';
-  $('#vpStatus').textContent='正在声纹分组，约 1–2 分钟…';
+  const btn=$('#vpGroup'); if(btn.disabled) return;
+  if(!data||!data.taskId){ $('#vpStatus').textContent='请先选择一条录音'; return; }
+  const hasWin=(data.windows||[]).length>0;
+  const winScope=$('#vpScope').value==='win' && hasWin;
+  const rows=data.utterances.filter(u=>!winScope||(u.window&&u.window!=='full'));
+  if(rows.length<2){ $('#vpStatus').textContent='可分组的句子太少'; return; }
+  const sentences=rows.map(u=>({id:u.id,start:u.start,end:u.end,text:u.bodyText||u.text||''}));
+  const scene=vpScene();
+  const k=Math.min(6,Math.max(2,(scene.customers||2)+(scene.carVoice?1:0)+1));
+  const old=btn.textContent; btn.disabled=true; btn.textContent='分组中…';
+  vpStop(); $('#vpGroups').innerHTML='';
+  const started=Date.now(), estimate=Math.max(5,Math.round(rows.length*0.08));
+  const tick=setInterval(()=>{
+    const sec=Math.round((Date.now()-started)/1000);
+    $('#vpStatus').textContent=`正在分组 ${rows.length} 句，已用 ${sec} 秒（首次约 ${estimate} 秒，同一录音再次分组会很快）`;
+  },500);
+  const ctrl=new AbortController(); const timeout=setTimeout(()=>ctrl.abort(),15*60*1000);
   try{
-    const rec=bundle.recordings.find(r=>Number(r.taskId)===Number(data.taskId)&&Number(r.projectId||0)===Number(data.projectId||0));
-    const sentences=rec.utterances.map(u=>({id:u.id,start:u.start,end:u.end,text:u.bodyText||u.text}));
-    const k=Math.min(4,Math.max(2,(vpScene().customers||2)+ (vpScene().carVoice?1:0) + 1));
-    const out=await vpCall('/group',{taskId:data.taskId,k,sentences});
-    // build cluster -> rows map client side using sentence overlap with cluster samples
-    const rowsByCluster={};
-    for(const g of out.groups){
-      rowsByCluster[g.cluster]=(g.members && g.members.length) ? g.members : g.samples;
-    }
-    window._vpGroups=out.groups;
-    vpRenderGroups(out.groups, rowsByCluster);
-    $('#vpStatus').textContent=`分成 ${out.clusters} 组，请逐组试听`;
+    const res=await fetch(VP_ENDPOINT+'/group',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({taskId:data.taskId,projectId:data.projectId,k,sentences}),signal:ctrl.signal});
+    const out=await res.json();
+    if(!res.ok||!out.ok) throw new Error(out.error||('HTTP '+res.status));
+    vpRenderGroups(out.groups);
+    $('#vpStatus').textContent=`分成 ${out.clusters} 组；高置信 ${out.sure}/${out.turns} 句。请逐组试听后再应用。`;
   }catch(e){
-    $('#vpStatus').textContent='失败：'+e.message;
+    $('#vpStatus').textContent='失败：'+(e.name==='AbortError'?'等待超时，请稍后重试':e.message);
   }finally{
-    btn.disabled=false; btn.textContent=old;
+    clearInterval(tick); clearTimeout(timeout); btn.disabled=false; btn.textContent=old;
   }
 });
 // ---------------- end voiceprint ----------------

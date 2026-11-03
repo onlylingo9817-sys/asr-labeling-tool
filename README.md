@@ -75,13 +75,21 @@ pip install sherpa-onnx soundfile funasr
 - `sherpa-onnx-pyannote-segmentation-3-0`
 - `3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx`
 
-在 `.env` 设置 `ENABLE_VOICEPRINT=1` 及模型/音频映射：
+在 `.env` 设置 `ENABLE_VOICEPRINT=1`。默认会按 `app/editor/data.json` 中每个录音的 `audio` 字段自动解析音频，支持多项目、任意 task id：
 
 ```ini
-VOICE_AUDIO_JSON={"5":"app/editor/audio/my.wav"}
+ENABLE_VOICEPRINT=1
 SEG_MODEL=/path/to/segmentation/model.onnx
 EMB_MODEL=/path/to/campplus.onnx
 ```
+
+如果需要覆盖某条录音的音频路径，可额外设置：
+
+```ini
+VOICE_AUDIO_JSON={"5":"app/editor/audio/my.wav"}
+```
+
+`/group`、`/enroll`、`/candidates`、`/apply` 建议同时传 `taskId` 和 `projectId`；旧客户端只传 `taskId` 仍然兼容。
 
 声纹结果只是辅助分组，短插话和重叠话仍会出错，不能替代人工试听。
 
