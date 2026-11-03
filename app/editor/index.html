@@ -191,6 +191,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
     </div>
 
     <div class="filters" id="filters"></div>
+    <div style="display:flex;justify-content:flex-end;margin:-2px 0 8px"><button id="addRow" class="ghost" title="手动新增一句；空录音也能开始标注">＋ 新增一句</button></div>
     <div class="card list" id="list"></div>
   </div>
 
@@ -277,6 +278,7 @@ async function init(){
     flushPersist(); localStorage.setItem('asr-project',$('#projSel').value); populateRecordings();
   });
   $('#pullLS').addEventListener('click',pullFromLabelStudio);
+  $('#addRow').addEventListener('click',addUtterance);
   const preferred=Number(localStorage.getItem('asr-project'))||localIds[0]||null;
   await refreshProjectNames(localIds,preferred);
   localStorage.setItem('asr-project',$('#projSel').value);
@@ -317,6 +319,18 @@ function populateRecordings(){
   sel.value=String(pick.taskId);
   sel.onchange=()=>{flushPersist(); loadRecording(+sel.value);};
   loadRecording(+pick.taskId);
+}
+function addUtterance(){
+  if(!data || !data.taskId){ alert('请先在 Label Studio 里建 task，或选择一个已有录音。'); return; }
+  snapshot();
+  const last=data.utterances[data.utterances.length-1];
+  const start=last?Math.min(data.duration, Math.ceil(last.end*1000)/1000):0;
+  const end=Math.min(data.duration||start+2, start+2);
+  data.utterances.push({id:`${data.taskId}-manual-${Date.now()}`,start,end,text:'',bodyText:'',
+    pieces:[{text:'',start,end,isInterjection:false,speaker:'UNKNOWN',speakerConfidence:'low',speakerSource:'auto',reviewed:false}],
+    speaker:'UNKNOWN',speakerSource:'auto',speakerConfidence:'low',reviewed:false,
+    isInterjection:false,hasInterjection:false,tags:[],grade:'unknown',displayLabel:'待核',window:'full'});
+  persist(); render(); seekTo(data.utterances.length-1);
 }
 function loadRecording(taskId){
   const rec=bundle.recordings.find(r=>Number(r.taskId)===Number(taskId) && Number(r.projectId||0)===currentProject());

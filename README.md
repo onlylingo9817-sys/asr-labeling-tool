@@ -115,5 +115,6 @@ scripts/         启停与状态
    - 音频复制为 `app/editor/audio/project<项目>_task<task>.wav`，不同项目不会互相覆盖；
    - 同时生成该录音的独立波形。
 5. 同步写回时会校验 `projectId` 与 task 的真实项目；不一致会拒绝写入，避免把 A 项目的标注写到 B 项目。
+6. 没有 annotation 的录音会以“未标注”拉入；可以点「＋ 新增一句」手动开始录入。
 
 原有 `data.json` 中没有 `projectId` 的旧录音，建议补上 `projectId` 后再做多项目操作。
