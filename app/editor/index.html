@@ -211,6 +211,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
       <div><span class="kbd">⌘Z</span> 撤销上一步</div>
       <div>自动合并：同一说话人且间隔≤1秒</div>
       <div><span class="kbd">C</span> 当前句为顾客插话 <span class="kbd">U</span> 分不清</div>
+      <div>标签值直接使用 Label Studio 的英文值：overlap / accent / unclear / cut。</div>
       <div>“已有标注”取自本项目已标区间；其余为机器建议，必须听音确认。</div>
       <div>同步时只有人工确认句写 Annotation，其余写 Prediction；不会静默覆盖旧人工标注。</div>
     </div>
@@ -251,6 +252,8 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
 <script>
 const SPEAKERS=['SALES_1','SALES_2','SALES_3','SALES_4','CUSTOMER_1','CUSTOMER_2','CUSTOMER_3','CUSTOMER_4','CUSTOMER_5','CAR_VOICE','OTHER','UNKNOWN','BACKGROUND'];
 const TAGS=[['overlap','抢话'],['accent','口音'],['unclear','听不清'],['cut','截断']];
+const TAG_LABEL=(k)=>({overlap:'抢话',accent:'口音',unclear:'听不清',cut:'截断'}[k]||k);
+const tagCount=(u)=>Array.isArray(u?.tags)?u.tags.length:0;
 
 let data=null, active=-1, saveTimer=null;
 const undoStack=[], redoStack=[];
@@ -449,17 +452,18 @@ function render(){
           ${speakerOptions(u.speaker).map(s=>`<option value="${s}" ${s===u.speaker?'selected':''}>${s}</option>`).join('')}
         </select>
         <span class="conf ${confClass}">${u.displayLabel||(u.speakerConfidence==='manual'?'人工确认':u.speaker==='UNKNOWN'?'待核':'机器建议')}</span>
+        ${tagCount(u)?`<span class="conf">标签: ${u.tags.join(', ')}</span>`:''}
       </div>
       <div>
         <textarea class="txt" data-i="${i}" rows="1" title="${u.hasInterjection?'父句完整区间：'+fmtMs(u.start)+' → '+fmtMs(u.end):''}">${escapeHtml(u.bodyText||u.text||'')}</textarea>
         ${nestedChips(u,i)}
         <div class="candRow" data-i="${i}">${candButtons(u,i)}</div>
-        <div class="tags">
+        <div class="tags" title="标签值写回 Label Studio 的英文 choices">
           <button class="tagbtn split" data-i="${i}" title="把光标处或选中位置拆成两句（S）">✂ 拆分(S)</button>
           <button class="tagbtn merge" data-i="${i}" title="与下一句合并（M）">⤵ 合并(M)</button>
           <button class="tagbtn quick ${u.speaker.startsWith('CUSTOMER')?'on':''}" data-i="${i}" data-quick="customer">顾客插话(C)</button>
           <button class="tagbtn quick" data-i="${i}" data-quick="unknown">分不清(U)</button>
-          ${TAGS.map(([k,label])=>`<button class="tagbtn ${u.tags.includes(k)?'on':''}" data-i="${i}" data-tag="${k}">${label}</button>`).join('')}
+          ${TAGS.map(([k,label])=>`<button class="tagbtn ${u.tags.includes(k)?'on':''}" data-i="${i}" data-tag="${k}" title="${label}">${k}</button>`).join('')}
         </div>
       </div>`;
     row.addEventListener('click',e=>{if(e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='BUTTON')return; seekTo(i);});
@@ -871,11 +875,13 @@ async function syncToLabelStudio(){
   const rows=syncRows();
   const confirmed=rows.filter(r=>r.confidence==='manual').length;
   const pending=rows.length-confirmed;
+  const tagged=rows.filter(r=>(r.tags||[]).length).length;
+  const tagKeys=[...new Set(rows.flatMap(r=>r.tags||[]))];
   let mode='confirmed';
   if(!confirmed){
-    if(!confirm(`当前没有人工确认句。\n本次只会写 ${pending} 句到 Prediction（草稿/建议），不会创建 Annotation，也不会标记任务完成。\n继续？`)) return;
+    if(!confirm(`当前没有人工确认句。\n本次只会写 ${pending} 句到 Prediction（草稿/建议），不会创建 Annotation，也不会标记任务完成。\n已选标签 ${tagged} 句${tagKeys.length?'（'+tagKeys.join(', ')+'）':''}\n继续？`)) return;
   }else{
-    const msg=`task ${data.taskId}：共 ${rows.length} 句\n人工确认 ${confirmed} 句 → 写 Annotation\n机器待定 ${pending} 句 → 写 Prediction\n写回前自动备份数据库。继续？`;
+    const msg=`task ${data.taskId}：共 ${rows.length} 句\n人工确认 ${confirmed} 句 → 写 Annotation\n机器待定 ${pending} 句 → 写 Prediction\n已选标签 ${tagged} 句${tagKeys.length?'（'+tagKeys.join(', ')+'）':''}\n写回前自动备份数据库。继续？`;
     if(!confirm(msg)) return;
     if(pending){
       const typed=prompt(`默认只把 ${confirmed} 句人工确认写为 Annotation，${pending} 句机器待定只写 Prediction。\n\n如确实要把全部 ${rows.length} 句都当正式标注提交，请输入“全部同步”：`,'');
