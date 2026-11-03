@@ -141,8 +141,9 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
     <input type="checkbox" id="autoMerge" checked> 自动合并
   </label>
   <button id="mergeNow" title="立即按规则合并当前语音">⇉ 立即合并</button>
-  <button id="undo" title="撤销上一步（⌘Z）">↶ 撤销</button>
-  <button id="redo" title="重做（⇧⌘Z；需先撤销一步）">↷ 重做</button>
+  <button id="undo" title="撤销最近一步编辑（⌘Z）">↶ 撤销一步</button>
+  <button id="redo" title="重做最近一次撤销（⇧⌘Z）">↷ 重做一步</button>
+  <button id="resetDraft" title="清除当前录音的全部本地改动，回到 ASR 初始底稿">⟲ 重置为底稿</button>
   <button id="export">导出 Label Studio JSON</button>
 
   <div class="minibar" id="minibar" hidden>
@@ -256,7 +257,7 @@ const TAGS=[['overlap','抢话'],['accent','口音'],['unclear','听不清'],['c
 const TAG_LABEL=(k)=>({overlap:'抢话',accent:'口音',unclear:'听不清',cut:'截断'}[k]||k);
 const tagCount=(u)=>Array.isArray(u?.tags)?u.tags.length:0;
 
-let data=null, active=-1, saveTimer=null;
+let data=null, active=-1, saveTimer=null, suppressPersist=false;
 const undoStack=[], redoStack=[];
 const CONFIRMED=new Set(['manual','reference']);
 const isConfirmed=u=>!!u && (u.reviewed===true || CONFIRMED.has(u.speakerConfidence));
@@ -363,10 +364,43 @@ async function runASR(){
   finally{ btn.disabled=false; btn.textContent=old; }
 }
 
+async function resetToBase(){
+  if(!data || !data.taskId){ alert('请先选择一条录音。'); return; }
+  clearTimeout(saveTimer);
+  if(!confirm(`第一次确认：重置当前录音？\n\n录音：${data.title}\n这会清除所有本地标记、标签、合并/拆分结果。`)) return;
+  if(!confirm('第二次确认：回到这份录音的初始底稿？\n\n重置前会先备份当前草稿。')) return;
+  const btn=$('#resetDraft'); const old=btn.textContent;
+  btn.disabled=true; btn.textContent='重置中…';
+  try{
+    // Save the current draft to a downloadable JSON so the user can recover it.
+    download(`draft-backup-task${data.taskId}-${new Date().toISOString().replace(/[:.]/g,'-')}.json`,
+      JSON.stringify({taskId:data.taskId,projectId:data.projectId,utterances:data.utterances},null,2));
+    const resetTaskId=data.taskId, resetProjectId=data.projectId;
+    clearTimeout(saveTimer);
+    localStorage.removeItem(editorKey(resetTaskId,resetProjectId));
+    suppressPersist=true;
+    const fresh=await (await fetch('data.json?_='+Date.now())).json();
+    bundle.recordings=fresh.recordings;
+    // Stay on the same recording; reload its server-side base state.
+    localStorage.setItem('asr-project',String(resetProjectId));
+    $('#projSel').value=String(resetProjectId);
+    $('#recSel').innerHTML=(bundle.recordings||[]).filter(r=>Number(r.projectId||0)===Number(resetProjectId))
+      .map(r=>`<option value="${r.taskId}">${r.label} · ${r.utterances.length ? r.utterances.length+' 句' : '未标注'}</option>`).join('');
+    $('#recSel').value=String(resetTaskId);
+    loadRecording(+resetTaskId);
+    suppressPersist=false;
+    setSyncStatus('已重置为底稿');
+    alert('已重置为底稿；重置前的草稿已下载为 JSON 备份。');
+  }catch(e){ alert('重置失败：'+e.message); }
+  finally{ btn.disabled=false; btn.textContent=old; }
+}
+
+
 function loadRecording(taskId){
   const rec=bundle.recordings.find(r=>Number(r.taskId)===Number(taskId) && Number(r.projectId||0)===currentProject());
   if(!rec) return;
-  flushPersist(); clearHistory();
+  if(!suppressPersist) flushPersist();
+  clearHistory();
   let rows;
   try{
     const saved=JSON.parse(localStorage.getItem(editorKey(taskId,rec.projectId))||'null');
@@ -723,7 +757,7 @@ function redo(){
   persist(); render(); updateSide(); updateHistoryButtons();
 }
 function persist(){
-  if(!data) return;
+  if(!data || suppressPersist) return;
   clearTimeout(saveTimer);
   const taskId=data.taskId;
   saveTimer=setTimeout(()=>{
@@ -942,6 +976,7 @@ async function syncToLabelStudio(){
 
 $('#undo').addEventListener('click',undo);
 $('#redo').addEventListener('click',redo);
+$('#resetDraft').addEventListener('click',resetToBase);
 $('#mergeNow').addEventListener('click',()=>{
   const n=autoMergeSameSpeaker();
   if(!n) alert('没有符合“同一说话人、间隔≤1秒、无嵌套插话”的相邻句。');
