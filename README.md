@@ -146,3 +146,14 @@ AUTO_ASR=0
 ```
 
 音频、波形始终会生成，不依赖 ASR。
+
+
+## 机器可执行的安装指引
+
+如果你要让 AI/同事把仓库装到可用状态，直接读 `AI_SETUP.md`，并先运行：
+
+```bash
+./scripts/doctor.sh
+```
+
+`doctor.sh` 会明确列出缺少的 ffmpeg、ASR 环境或 Label Studio 连接，不会用模糊的“失败”代替。
