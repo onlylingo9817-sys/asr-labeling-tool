@@ -121,6 +121,11 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
     <div class="sub" id="meta"></div>
   </div>
   <div class="recWrap">
+    <label class="recLabel" for="projSel">项目</label>
+    <select id="projSel" class="recSel" title="选择 Label Studio 项目">
+      <option value="">加载中…</option>
+    </select>
+    <button id="pullLS" title="从 Label Studio 拉取该项目的新任务，不覆盖本地已有录音">⇣ 从 Label Studio 拉取</button>
     <label class="recLabel" for="recSel">语音</label>
     <select id="recSel" class="recSel" title="切换要校对的录音"></select>
     <span class="sub" id="recMeta"></span>
@@ -254,8 +259,11 @@ const $=s=>document.querySelector(s);
 const fmt=t=>{t=Math.max(0,t||0);const m=Math.floor(t/60),s=Math.floor(t%60);return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')};
 const fmtMs=t=>{t=Math.max(0,t||0);const h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60;return (h?String(h).padStart(2,'0')+':':'')+String(m).padStart(2,'0')+':'+s.toFixed(3).padStart(6,'0')};
 
-let bundle=null;
+let bundle=null, projects=[];
 const audio=document.getElementById('audio');
+const currentProject=()=>Number($('#projSel').value)||null;
+const projectRows=()=>(bundle?.recordings||[]).filter(r=>Number(r.projectId||0)===currentProject());
+const editorKey=(taskId,projectId)=>`asr-editor-${Number(projectId)||0}-${taskId}`;
 async function init(){
   try{
     bundle=await (await fetch('data.json')).json();
@@ -263,50 +271,101 @@ async function init(){
     $('#meta').textContent='无法读取 data.json：'+e.message;
     return;
   }
-  const sel=$('#recSel');
-  sel.innerHTML=bundle.recordings.map(r=>`<option value="${r.taskId}">${r.label} · ${r.utterances.length} 句</option>`).join('');
-  const savedRec=localStorage.getItem('asr-rec');
-  const pick=bundle.recordings.find(r=>String(r.taskId)===savedRec)||bundle.recordings[0];
-  sel.value=String(pick.taskId);
-  sel.addEventListener('change',()=>{
-    flushPersist();
-    loadRecording(+sel.value);
+  const localIds=[...new Set((bundle.recordings||[]).map(r=>Number(r.projectId||0)).filter(Boolean))].sort((a,b)=>a-b);
+  $('#projSel').innerHTML='<option value="">加载中…</option>';
+  $('#projSel').addEventListener('change',()=>{
+    flushPersist(); localStorage.setItem('asr-project',$('#projSel').value); populateRecordings();
   });
-  loadRecording(+sel.value);
+  $('#pullLS').addEventListener('click',pullFromLabelStudio);
+  const preferred=Number(localStorage.getItem('asr-project'))||localIds[0]||null;
+  await refreshProjectNames(localIds,preferred);
+  localStorage.setItem('asr-project',$('#projSel').value);
+  populateRecordings();
+}
+async function refreshProjectNames(localIds=[],preferred=null){
+  let all=[];
+  try{
+    const res=await fetch(bundle.syncEndpoint.replace('/sync','/projects'));
+    const out=await res.json();
+    if(res.ok&&out.ok) { projects=out.projects||[]; all=projects; }
+  }catch(e){ /* sync service may be disabled */ }
+  if(!all.length) all=localIds.map(id=>({id,title:`项目 ${id}`}));
+  const ids=[...new Set([...localIds,...all.map(p=>Number(p.id))])];
+  if(!ids.length){ $('#projSel').innerHTML='<option value="0">默认数据</option>'; return; }
+  const byId=new Map(all.map(p=>[Number(p.id),p]));
+  const ordered=[...ids].sort((a,b)=>a-b);
+  const current=(preferred && ordered.includes(Number(preferred))) ? Number(preferred) : (Number($('#projSel').value)||ordered[0]);
+  $('#projSel').innerHTML=ordered.map(id=>{
+    const p=byId.get(id); const title=p?`${p.title} (#${id})`:`项目 ${id}`;
+    return `<option value="${id}" ${id===current?'selected':''}>${title}</option>`;
+  }).join('');
+  if(![...$('#projSel').options].some(o=>Number(o.value)===current)) $('#projSel').value=String(ordered[0]);
+}
+function populateRecordings(){
+  const rows=projectRows();
+  const sel=$('#recSel');
+  if(!rows.length){
+    sel.innerHTML='<option value="">该项目暂无录音，请点“从 Label Studio 拉取”</option>';
+    $('#meta').textContent='该项目暂无录音';
+    data={taskId:null,projectId:currentProject(),title:'空项目',audio:'',duration:0,waveform:'',windows:[],utterances:[]};
+    active=-1; $('#list').innerHTML='<div class="card" style="padding:20px;color:#68707a">该项目还没有可编辑录音。点上方“从 Label Studio 拉取”新增任务。</div>';
+    $('#seek').max=0; $('#miniSeek').max=0; return;
+  }
+  sel.innerHTML=rows.map(r=>`<option value="${r.taskId}">${r.label} · ${r.utterances.length ? r.utterances.length+' 句' : '未标注'}</option>`).join('');
+  const savedRec=localStorage.getItem(`asr-rec-${currentProject()||0}`);
+  const pick=rows.find(r=>String(r.taskId)===savedRec)||rows[0];
+  sel.value=String(pick.taskId);
+  sel.onchange=()=>{flushPersist(); loadRecording(+sel.value);};
+  loadRecording(+pick.taskId);
 }
 function loadRecording(taskId){
-  const rec=bundle.recordings.find(r=>r.taskId===taskId);
+  const rec=bundle.recordings.find(r=>Number(r.taskId)===Number(taskId) && Number(r.projectId||0)===currentProject());
   if(!rec) return;
-  flushPersist();
-  clearHistory();
+  flushPersist(); clearHistory();
   let rows;
   try{
-    const saved=JSON.parse(localStorage.getItem('asr-editor-'+taskId)||'null');
+    const saved=JSON.parse(localStorage.getItem(editorKey(taskId,rec.projectId))||'null');
     rows=Array.isArray(saved)&&saved.length?saved:window.structuredClone(rec.utterances);
   }catch(e){ rows=window.structuredClone(rec.utterances); }
   migrateRows(rows);
-  data={taskId:rec.taskId,title:rec.label,audio:rec.audio,duration:rec.duration,
-        waveform:rec.waveform||`waveforms/task${rec.taskId}.png`,
-        windows:rec.windows,utterances:rows,source:'FunASR 自动底稿'};
-  localStorage.setItem('asr-rec',String(taskId));
+  data={taskId:rec.taskId,projectId:rec.projectId,title:rec.label,audio:rec.audio,duration:rec.duration,
+        waveform:rec.waveform||'',windows:rec.windows||[],utterances:rows,source:'Label Studio'};
+  localStorage.setItem(`asr-rec-${currentProject()||0}`,String(taskId));
   document.title=`ASR 底稿校对 · ${rec.label}`;
-  $('#meta').textContent=`${rec.label} · ${data.utterances.length} 句 · 机器底稿，说话人需人工确认`;
+  $('#meta').textContent=`${rec.label} · ${data.utterances.length} 句 · 项目 ${rec.projectId}`;
   $('#recMeta').textContent=`${fmt(data.duration)}`;
   audio.src=data.audio;
   $('#seek').max=data.duration;
   $('#miniSeek').max=data.duration;
   const waveimg=$('#waveimg');
-  waveimg.onerror=()=>{
-    waveimg.removeAttribute('src');
-    waveimg.alt='该录音暂无波形图；仍可拖进度条或点击波形区域定位';
-  };
-  waveimg.src=data.waveform;
-  active=-1; window._filter=undefined;
-  window._vpGroups=[];
-  $('#vpGroups').innerHTML='';
-  audio.currentTime=0;
-  setSyncStatus('');
+  if(data.waveform){ waveimg.onerror=()=>{waveimg.removeAttribute('src');waveimg.alt='该录音暂无波形图';}; waveimg.src=data.waveform; }
+  else { waveimg.removeAttribute('src'); waveimg.alt='该录音暂无波形图'; }
+  active=-1; window._filter=undefined; window._vpGroups=[];
+  $('#vpGroups').innerHTML=''; audio.currentTime=0; setSyncStatus('');
   renderFilters(); render(); paintTime(0); syncPlayButtons();
+}
+async function pullFromLabelStudio(){
+  const projectId=currentProject();
+  if(!projectId){ alert('请先选择项目'); return; }
+  const btn=$('#pullLS'); const old=btn.textContent;
+  btn.disabled=true; btn.textContent='拉取中…';
+  try{
+    const res=await fetch(bundle.syncEndpoint.replace('/sync','/pull'),{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({projectId})});
+    const out=await res.json();
+    if(!res.ok||!out.ok) throw new Error(out.error||('HTTP '+res.status));
+    const fresh=await (await fetch('data.json?_='+Date.now())).json();
+    bundle.recordings=fresh.recordings;
+    await refreshProjectNames([...new Set((fresh.recordings||[]).map(r=>Number(r.projectId||0)).filter(Boolean))],projectId);
+    $('#projSel').value=String(projectId);
+    localStorage.setItem('asr-project',String(projectId));
+    populateRecordings();
+    const added=out.added||[];
+    const missing=out.missing||[];
+    alert(`拉取完成。\\n新增 task：${added.length?added.join(', '):'无'}\\n已跳过（本地已有）：${(out.skipped||[]).length}\\n缺音频/无标注：${missing.length?missing.map(x=>x.taskId).join(', '):'无'}`);
+
+  }catch(e){ alert('拉取失败：'+e.message+'\\n请确认同步服务已启动，且 Label Studio 正在运行。'); }
+  finally{ btn.disabled=false; btn.textContent=old; }
 }
 function migrateRows(rows){
   const isInt=p=>!!p && (p.isInterjection||p.interjection);
@@ -356,7 +415,7 @@ function pieceLabel(p){
   return p.speaker && p.speaker!=='UNKNOWN' ? p.speaker : '插话待核';
 }
 function render(){
-  const list=$('#list'); list.innerHTML='';
+  const list=$('#list'); if(!data) return; list.innerHTML='';
   const visible=data.utterances.map((u,i)=>({u,i})).filter(({u})=>{
     if(!window._filter) return true;
     if(window._filter==='__TODO__') return !isConfirmed(u) && (u.speaker==='UNKNOWN' || u.speakerConfidence==='low');
@@ -618,14 +677,14 @@ function persist(){
   clearTimeout(saveTimer);
   const taskId=data.taskId;
   saveTimer=setTimeout(()=>{
-    try{localStorage.setItem('asr-editor-'+taskId,JSON.stringify(data.utterances));}
+    try{localStorage.setItem(editorKey(taskId,data.projectId),JSON.stringify(data.utterances));}
     catch(e){setSyncStatus('浏览器本地保存失败：'+e.message,true);}
   },200);
 }
 function flushPersist(){
   if(!data) return;
   clearTimeout(saveTimer);
-  try{localStorage.setItem('asr-editor-'+data.taskId,JSON.stringify(data.utterances));}catch(e){}
+  try{localStorage.setItem(editorKey(data.taskId,data.projectId),JSON.stringify(data.utterances));}catch(e){}
 }
 function setSyncStatus(text,isError=false){
   const el=$('#syncStatus'); if(!el) return;
@@ -634,6 +693,7 @@ function setSyncStatus(text,isError=false){
   el.classList.toggle('ok',!!text&&!isError);
 }
 function updateSide(){
+  if(!data){ return; }
   const done=data.utterances.filter(isConfirmed).length;
   $('#doneCount').textContent=`${done} / ${data.utterances.length}`;
   $('#lowCount').textContent=data.utterances.filter(u=>!isConfirmed(u)).length;
@@ -821,7 +881,7 @@ async function syncToLabelStudio(){
     let out=null;
     for(let attempt=0;attempt<2;attempt++){
       const res=await fetch(bundle.syncEndpoint,{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({taskId:data.taskId,utterances:rows,mode,replaceAnnotation})});
+        body:JSON.stringify({projectId:data.projectId,taskId:data.taskId,utterances:rows,mode,replaceAnnotation})});
       out=await res.json();
       if(res.ok&&out.ok) break;
       if((res.status===409 || res.status===403) && out.code==='annotation_conflict' && !replaceAnnotation){
@@ -1147,7 +1207,7 @@ $('#vpGroup').addEventListener('click',async()=>{
   const btn=$('#vpGroup'); btn.disabled=true; const old=btn.textContent; btn.textContent='分组中…';
   $('#vpStatus').textContent='正在声纹分组，约 1–2 分钟…';
   try{
-    const rec=bundle.recordings.find(r=>r.taskId===data.taskId);
+    const rec=bundle.recordings.find(r=>Number(r.taskId)===Number(data.taskId)&&Number(r.projectId||0)===Number(data.projectId||0));
     const sentences=rec.utterances.map(u=>({id:u.id,start:u.start,end:u.end,text:u.bodyText||u.text}));
     const k=Math.min(4,Math.max(2,(vpScene().customers||2)+ (vpScene().carVoice?1:0) + 1));
     const out=await vpCall('/group',{taskId:data.taskId,k,sentences});

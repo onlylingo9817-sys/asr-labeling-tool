@@ -24,6 +24,10 @@ READ_ONLY_ANNOTATION_TASKS = {
     int(x) for x in os.environ.get('LS_READ_ONLY_TASKS', '').split(',') if x.strip()
 }
 LS_BIN = os.environ.get('LS_BIN', 'label-studio')
+if LS_BIN == 'label-studio' and not shutil.which(LS_BIN):
+    candidate = Path.home()/'.venvs'/'label-studio'/'bin'/'label-studio'
+    if candidate.exists(): LS_BIN = str(candidate)
+EDITOR_DATA = Path(os.environ.get('EDITOR_DATA_PATH', str(ROOT/'app'/'editor'/'data.json')))
 
 def task_audio_map():
     """Return task_id -> Label Studio audio path from local editor data.
@@ -33,7 +37,7 @@ def task_audio_map():
     """
     if TASKS:
         return TASKS
-    data_path=ROOT/'app'/'editor'/'data.json'
+    data_path=EDITOR_DATA
     if not data_path.exists():
         return {}
     bundle=json.loads(data_path.read_text(encoding='utf-8'))
@@ -192,6 +196,147 @@ def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=Fals
     return plan
 
 
+def list_projects():
+    """List Label Studio projects with task counts."""
+    data=api('/api/projects/?page_size=200') or {}
+    rows=data.get('results', data if isinstance(data,list) else [])
+    return [{'id':r.get('id'),'title':r.get('title') or f"Project {r.get('id')}",
+             'taskCount':r.get('task_number') or 0,
+             'createdAt':r.get('created_at')} for r in rows]
+
+def _media_path(ls_audio):
+    """Resolve /data/upload/<project>/<file> to the local Label Studio media path."""
+    # DB lives next to the media dir; derive both from LS_DB.
+    media_root=Path(os.environ.get('LS_MEDIA_ROOT', str(DB.parent/'media')))
+    rel=str(ls_audio or '').lstrip('/')
+    if rel.startswith('data/'):
+        rel=rel[len('data/'):]
+    return media_root/rel
+
+def _region_to_utterances(result):
+    """Convert Label Studio's flat regions into editor utterances.
+
+    Regions emitted by this tool share a region id for speaker/text/tags.
+    Nested interjections are separate ids and are folded back into their
+    containing parent row when their time span lies inside it.
+    """
+    groups={}
+    for x in result or []:
+        value=x.get('value') or {}
+        key=(x.get('id'), round(float(value.get('start',0)),3), round(float(value.get('end',0)),3))
+        groups.setdefault(key,{'speaker':None,'text':'','tags':[],'start':key[1],'end':key[2]})
+        g=groups[key]
+        if x.get('from_name')=='speaker':
+            labels=value.get('labels') or []
+            g['speaker']=labels[0] if labels else None
+        elif x.get('from_name')=='text':
+            g['text']=''.join(value.get('text') or [])
+        elif x.get('from_name')=='tags':
+            g['tags']=list(value.get('choices') or [])
+    raw=[]
+    for key,g in groups.items():
+        raw.append({'rid':key[0],'start':g['start'],'end':g['end'],'speaker':g['speaker'] or 'UNKNOWN',
+                    'text':g['text'],'tags':g['tags']})
+    raw.sort(key=lambda r:(r['start'],r['end'],r['rid']))
+    # Fold small regions into an enclosing parent, but only when the region is
+    # much shorter than the parent (the nested interjection shape).
+    out=[]
+    used=set()
+    for i,r in enumerate(raw):
+        if i in used: continue
+        children=[ (j,c) for j,c in enumerate(raw)
+                   if j!=i and j not in used and c['start']>=r['start']-0.002 and c['end']<=r['end']+0.002
+                   and (c['end']-c['start']) < (r['end']-r['start'])*0.9 ]
+        # Prefer the tightest enclosing parent, not a chain of overlaps.
+        children=[c for _,c in children]
+        used.add(i)
+        for c in children:
+            # only fold truly nested small pieces, never two long adjacent rows
+            used.add(next(j for j,x in enumerate(raw) if x is c))
+        u={'id':f"{r['rid']}-{len(out)+1:04d}",'start':r['start'],'end':r['end'],
+           'text':r['text'],'bodyText':r['text'],'speaker':r['speaker'],
+           'speakerSource':'manual','speakerConfidence':'manual','reviewed':True,
+           'displayLabel':'来自 Label Studio','isInterjection':False,
+           'hasInterjection':bool(children),'tags':r['tags'],'grade':'existing','window':'full',
+           'pieces':[]}
+        if children:
+            u['pieces']=[{'text':c['text'],'start':c['start'],'end':c['end'],'isInterjection':True,
+                          'speaker':c['speaker'],'speakerSource':'manual','speakerConfidence':'manual','reviewed':True}
+                         for c in children]
+            u['bodyText']=''.join(x['text'] for x in raw if x is r)
+        else:
+            u['pieces']=[{'text':r['text'],'start':r['start'],'end':r['end'],'isInterjection':False,
+                          'speaker':r['speaker'],'speakerSource':'manual','speakerConfidence':'manual','reviewed':True}]
+        out.append(u)
+    return out
+
+def pull_project(project_id, force=False, include_empty=True):
+    """Pull new tasks from a Label Studio project into editor/data.json.
+
+    Existing task ids are skipped unless force=True. Local files are written
+    atomically; the response reports what changed.
+    """
+    project_id=int(project_id)
+    tasks=api(f'/api/projects/{project_id}/tasks/?page_size=1000') or []
+    if isinstance(tasks,dict): tasks=tasks.get('results') or tasks.get('tasks') or []
+    data_path=EDITOR_DATA
+    bundle=json.loads(data_path.read_text(encoding='utf-8'))
+    recordings=bundle.setdefault('recordings',[])
+    existing={(int(r.get('projectId') or 0), int(r['taskId'])) for r in recordings}
+    added=[]; skipped=[]; missing=[]
+    for t in tasks:
+        tid=int(t['id'])
+        if (project_id,tid) in existing and not force:
+            skipped.append(tid); continue
+        audio=str((t.get('data') or {}).get('audio') or '')
+        if not audio:
+            missing.append({'taskId':tid,'reason':'no audio field'}); continue
+        src=_media_path(audio)
+        if not src.exists():
+            missing.append({'taskId':tid,'reason':f'audio not found: {src}'}); continue
+        anns=t.get('annotations') or []
+        result=(anns[0].get('result') if anns else []) or []
+        utterances=_region_to_utterances(result)
+        if not utterances and not include_empty:
+            missing.append({'taskId':tid,'reason':'no annotation'}); continue
+        duration=max((u['end'] for u in utterances), default=0.0)
+        rel=f'audio/project{project_id}_task{tid}.wav'
+        dest=ROOT/'app'/'editor'/rel
+        dest.parent.mkdir(parents=True,exist_ok=True)
+        if force or not dest.exists():
+            shutil.copyfile(src,dest)
+        if not duration:
+            try:
+                p=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration',
+                                  '-of','default=nw=1:nk=1',str(dest)],capture_output=True,text=True)
+                duration=float(p.stdout.strip()) if p.returncode==0 else 0.0
+            except Exception:
+                duration=0.0
+        # Generate a waveform per pulled project/task. Failure is non-fatal.
+        wave_rel=f'waveforms/project{project_id}_task{tid}.png'
+        wave_dest=ROOT/'app'/'editor'/wave_rel
+        wave_dest.parent.mkdir(parents=True,exist_ok=True)
+        if not wave_dest.exists():
+            try:
+                subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-i',str(dest),
+                                '-filter_complex','showwavespic=s=1400x160:colors=#1d4ed8',
+                                '-frames:v','1','-y',str(wave_dest)],check=True,
+                               capture_output=True)
+            except Exception:
+                wave_rel=''
+        rec={'taskId':tid,'projectId':project_id,'label':f'project{project_id} / task {tid}',
+             'audio':rel,'waveform':wave_rel,'lsAudio':audio,'duration':round(duration,3),
+             'windows':[],'utterances':utterances}
+        # Replace a task with the same id only on explicit force.
+        recordings[:]=[r for r in recordings if not (
+            int(r['taskId'])==tid and int(r.get('projectId') or 0)==project_id and force)]
+        recordings.append(rec)
+        added.append(tid); existing.add((project_id,tid))
+    data_path.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8')
+    return {'projectId':project_id,'added':added,'skipped':skipped,'missing':missing,
+            'total':len(recordings)}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, payload):
         body=json.dumps(payload, ensure_ascii=False).encode()
@@ -207,13 +352,29 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith('/health'):
             return self._send(200, {'ok':True,'tasks':list(TASKS)})
+        if self.path.startswith('/projects'):
+            try: return self._send(200, {'ok':True,'projects':list_projects()})
+            except Exception as e: return self._send(500, {'ok':False,'error':str(e)})
         self._send(404, {'error':'not found'})
     def do_POST(self):
-        if not self.path.startswith('/sync'):
+        if not (self.path.startswith('/sync') or self.path.startswith('/pull')):
             return self._send(404, {'error':'not found'})
         try:
             length=int(self.headers.get('Content-Length','0'))
             payload=json.loads(self.rfile.read(length) or b'{}')
+            if self.path.startswith('/pull'):
+                return self._send(200, {'ok':True, **pull_project(payload['projectId'], bool(payload.get('force')), bool(payload.get('includeEmpty', True)))} )
+            if self.path.startswith('/sync'):
+                # A project id is required for new multi-project clients. It is
+                # optional for old local data whose recordings have no projectId.
+                expected_project=payload.get('projectId')
+                if expected_project is not None:
+                    try: expected_project=int(expected_project)
+                    except Exception: raise ValueError('projectId must be an integer')
+                    actual=api(f'/api/tasks/{int(payload["taskId"])}/') or {}
+                    if int(actual.get('project') or 0) != int(expected_project):
+                        return self._send(409, {'ok':False,'code':'project_mismatch',
+                            'error':f'task {payload["taskId"]} 属于 project {actual.get("project")}，不是 {expected_project}；已拒绝写回'})
             task_id=int(payload['taskId']); rows=payload['utterances']
             mode=payload.get('mode','confirmed')
             audio_map=task_audio_map()

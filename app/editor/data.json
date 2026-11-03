@@ -103,7 +103,8 @@
           "displayLabel": "人工确认",
           "window": "front"
         }
-      ]
+      ],
+      "projectId": 1
     }
   ],
   "syncEndpoint": "http://127.0.0.1:8768/sync"
