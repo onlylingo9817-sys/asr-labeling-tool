@@ -8,10 +8,13 @@ check() {
   if [[ "$enabled" != "1" ]]; then echo "[disabled] $name"; return; fi
   if session_running "$session" && curl -fsS --max-time 2 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
     echo "[running] $name port=$port"
+  elif curl -fsS --max-time 2 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+    echo "[running] $name port=$port (started from the settings panel)"
   elif lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "[external] $name port=$port occupied"
   else echo "[stopped] $name port=$port"; fi
 }
 check editor 8765 1
+check setup 8766 1
 check sync 8768 "${ENABLE_SYNC:-0}"
 check voiceprint 8769 "${ENABLE_VOICEPRINT:-0}"

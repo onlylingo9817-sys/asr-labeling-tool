@@ -62,25 +62,24 @@ python app/interjection_nested.py --audio my.wav --out my_nested.json
 - 嵌套插话按自己的起止时间和说话人写成独立 region
 - 项目 ID 与 task 实际所属项目不一致时拒绝写回
 
+## 环境与服务面板
+
+页面右上角「⚙ 环境与服务」可检测 ffmpeg / ASR / 声纹 / Label Studio 连接，并一键安装、启用或重启各项服务（由 `app/setup_server.py` 提供，端口 8766，随 `scripts/start_all.sh` 启动）。
+
 ## 声纹分组（可选，实验性）
 
 需要额外安装：
 
 ```bash
-pip install sherpa-onnx soundfile funasr
+pip install -r requirements.txt
 ```
 
-并准备两个模型：
-
-- `sherpa-onnx-pyannote-segmentation-3-0`
-- `3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx`
+声纹模型（Cam++）首次使用时会自动下载，无需手动准备。
 
 在 `.env` 设置 `ENABLE_VOICEPRINT=1`。默认会按 `app/editor/data.json` 中每个录音的 `audio` 字段自动解析音频，支持多项目、任意 task id：
 
 ```ini
 ENABLE_VOICEPRINT=1
-SEG_MODEL=/path/to/segmentation/model.onnx
-EMB_MODEL=/path/to/campplus.onnx
 ```
 
 如果需要覆盖某条录音的音频路径，可额外设置：

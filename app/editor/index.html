@@ -119,6 +119,28 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
 .vpMore{font-size:12px;padding:3px 9px}
 .vpResult{font-size:12px;color:var(--green)}
 .vpHint{font-size:12px;color:var(--muted);margin-top:6px}
+.setupDot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px;background:#cbd5e1;vertical-align:middle}
+.setupDot.ok{background:#16a34a}.setupDot.warn{background:#f59e0b}.setupDot.bad{background:#dc2626}
+.setupGroup{margin:14px 0 4px;font-size:12px;font-weight:650;color:var(--muted);letter-spacing:.04em}
+.setupItem{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px dashed var(--line)}
+.setupItem .ico{font-size:15px;text-align:center}
+.setupItem .t{font-weight:600}
+.setupItem .d{font-size:12px;color:var(--muted);word-break:break-all;white-space:pre-wrap}
+.setupItem .act{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.setupItem button{font-size:12px;padding:4px 10px}
+.setupItem button.go{background:var(--blue);border-color:var(--blue);color:#fff}
+.setupItem .manual{font-size:12px;color:#8a4b0f;background:#fff8e8;border:1px solid #f0d69b;border-radius:8px;padding:4px 8px;max-width:260px}
+.setupSwitch{font-size:11px;border-radius:999px;padding:2px 8px;border:1px solid var(--line);color:var(--muted)}
+.setupSwitch.on{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
+.setupSwitch.run{background:#e8efff;border-color:#b7c8ff;color:#16389c}
+.setupLog{background:#0f172a;color:#e2e8f0;border-radius:10px;padding:10px 12px;font:12px/1.5 ui-monospace,Menlo,monospace;max-height:220px;overflow:auto;white-space:pre-wrap;margin-top:10px}
+.setupBanner{padding:9px 12px;border-radius:9px;font-size:12px;margin-bottom:8px}
+.setupBanner.warn{background:#fff8e8;border:1px solid #f0d69b;color:#6b4a12}
+.setupBanner.ok{background:#e9f8ed;border:1px solid #b6e3c2;color:#12612c}
+.setupBanner.bad{background:#fdecec;border:1px solid #f5b5b5;color:#8a1c1c}
+.setupAdv{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+.setupAdv label{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px;align-items:center;font-size:12px;color:var(--muted);margin:6px 0}
+.setupAdv input{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:7px;padding:5px 8px;width:100%}
 .vpNote{font-size:12px;color:#8a4b0f;background:#fff8e8;border:1px solid #f0d69b;border-radius:9px;padding:9px 11px;margin-top:12px}
 .notice{background:#fff8e8;border:1px solid #f0d69b;border-radius:9px;padding:9px 11px;font-size:12px;color:#6b4a12;margin-bottom:12px}
 @media(max-width:900px){.wrap{grid-template-columns:1fr}.side{position:static}.row{grid-template-columns:58px 88px minmax(0,1fr)}}
@@ -142,6 +164,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
     <span class="sub" id="recMeta"></span>
   </div>
   <div class="spacer"></div>
+  <button id="setupBtn" title="环境与服务：检测、安装、启用 ASR / 声纹 / Label Studio 连接">⚙ 环境与服务<span id="setupDot" class="setupDot"></span></button>
   <button id="voiceBtn" title="声纹总配置：首次初始化、登记样本、批量定人">🎙 声纹配置</button>
   <label class="autoMergeWrap" title="只把前/中/尾三段窗口内的句子写回 Label Studio"><input type="checkbox" id="winOnly" checked> 仅同步三段内</label>
   <button id="sync" class="primary" title="把当前语音的校对结果写回 Label Studio">↥ 同步到 Label Studio</button>
@@ -229,6 +252,26 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
       <div>同步会按页面当前完整状态覆盖更新；标签也会一起写回。</div>
     </div>
   </aside>
+</div>
+
+<div class="modalMask" id="setupModal" hidden>
+  <div class="modal" style="width:min(820px,95vw)">
+    <div class="modalHead">
+      <b>环境与服务</b>
+      <span class="sub" id="setupSub">检测中…</span>
+      <button class="ghost" id="setupRefresh" style="margin-left:auto">↻ 重新检测</button>
+      <button class="ghost" id="setupClose">关闭</button>
+    </div>
+    <div class="modalBody">
+      <div id="setupBanner"></div>
+      <div id="setupBody"></div>
+      <div class="setupLog" id="setupLog" hidden></div>
+      <details class="setupAdv"><summary class="sub" style="cursor:pointer">高级配置（一般不用改）</summary>
+        <div id="setupAdv"></div>
+        <div style="margin-top:8px"><button id="setupSave" class="primary">保存配置</button> <span class="sub" id="setupSaveMsg"></span></div>
+      </details>
+    </div>
+  </div>
 </div>
 
 <div class="modalMask" id="voiceModal" hidden>
@@ -1328,6 +1371,127 @@ function exportLabels(){
 function download(name,text){
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'application/json'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
+
+// ---------------- environment & services panel ----------------
+const SETUP_ENDPOINT='http://127.0.0.1:8766';
+let setupTimer=null, setupJob=null;
+async function setupCall(path,payload){
+  let res;
+  try{ res=await fetch(SETUP_ENDPOINT+path,{method:payload===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},body:payload===undefined?undefined:JSON.stringify(payload)}); }
+  catch(e){ throw new Error('配置服务（8766）没有运行。请在终端运行 ./scripts/start_all.sh，然后刷新本页。'); }
+  const out=await res.json().catch(()=>({ok:false,error:'配置服务返回了无法解析的内容'}));
+  if(!res.ok||out.ok===false) throw new Error(out.error||('HTTP '+res.status));
+  return out;
+}
+const SETUP_ICON={ok:'✅',missing:'❌',optional:'➖'};
+function setupEsc(t){return String(t==null?'':t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function setupSummarize(st){
+  const need=st.items.filter(i=>i.state==='missing'&&i.group!=='sync');
+  const svc=st.services;
+  const wantSync=st.env.ENABLE_SYNC==='1';
+  if(need.length) return {level:'bad',text:`还有 ${need.length} 项必须的环境没有就绪：${need.map(i=>i.title).join('、')}`};
+  const lsItem=st.items.find(i=>i.key==='label_studio');
+  if(wantSync&&lsItem.state!=='ok') return {level:'warn',text:'已启用同步，但 Label Studio 不可访问，同步和拉取暂时不可用'};
+  if(wantSync&&!svc.find(s=>s.name==='sync').running) return {level:'warn',text:'同步服务已启用但没有运行'};
+  return {level:'ok',text:'基础环境就绪'};
+}
+function setupRenderServices(st){
+  const rows=st.services.map(sv=>{
+    let badge, btns='';
+    if(sv.running){ badge='<span class="setupSwitch run">运行中</span>'; }
+    else if(sv.port_conflict){ badge='<span class="setupSwitch">端口被占用</span>'; }
+    else if(sv.enabled){ badge='<span class="setupSwitch on">已启用·未运行</span>'; }
+    else badge='<span class="setupSwitch">未启用</span>';
+    if(sv.name==='editor'){ btns=''; }
+    else if(sv.blocked && !sv.running){ btns=`<span class="manual">${setupEsc(sv.blocked)}</span>`; }
+    else if(!sv.enabled && !sv.running){ btns=`<button class="go" data-svc="${sv.name}" data-op="enable">一键启用</button>`; }
+    else if(!sv.running){ btns=`<button class="go" data-svc="${sv.name}" data-op="start">启动</button><button data-svc="${sv.name}" data-op="disable">关闭</button>`; }
+    else { btns=`<button data-svc="${sv.name}" data-op="restart">重启</button><button data-svc="${sv.name}" data-op="disable">关闭</button>`; }
+    const desc={editor:'本页面所在的服务',sync:'拉取 / 同步到 Label Studio，需要 Label Studio 可访问',voiceprint:'声纹分组，需要 ASR / 声纹运行环境'}[sv.name];
+    return `<div class="setupItem"><div class="ico">${sv.running?'🟢':sv.enabled?'🟡':'⚪'}</div><div><div class="t">${setupEsc(sv.label)} <span class="sub">端口 ${sv.port}</span> ${badge}</div><div class="d">${setupEsc(desc)}</div></div><div class="act">${btns}</div></div>`;
+  }).join('');
+  return rows;
+}
+function setupRender(st){
+  const groups={base:'基础',asr:'ASR 与声纹',sync:'Label Studio'};
+  let html='';
+  for(const [g,title] of Object.entries(groups)){
+    const items=st.items.filter(i=>i.group===g);
+    html+=`<div class="setupGroup">${title}</div>`;
+    html+=items.map(i=>{
+      let act='';
+      if(i.fix&&i.fix.action){
+        const env=i.fix.env?` data-env='${setupEsc(JSON.stringify(i.fix.env))}'`:'';
+        act=`<button class="${i.state==='missing'?'go':''}" data-act="${i.fix.action}"${env}>${setupEsc(i.fix.label)}</button>`;
+      }else if(i.fix&&i.fix.manual){ act=`<span class="manual">${setupEsc(i.fix.manual)}</span>`; }
+      return `<div class="setupItem"><div class="ico">${SETUP_ICON[i.state]||'➖'}</div><div><div class="t">${setupEsc(i.title)}</div><div class="d">${setupEsc(i.detail)}</div></div><div class="act">${act}</div></div>`;
+    }).join('');
+    if(g==='sync'){ html+=`<div class="setupGroup">服务</div>`+setupRenderServices(st); }
+  }
+  $('#setupBody').innerHTML=html;
+  const sum=setupSummarize(st);
+  $('#setupBanner').innerHTML=`<div class="setupBanner ${sum.level}">${setupEsc(sum.text)}</div>`;
+  $('#setupSub').textContent=st.system+' · '+st.root;
+  const dot=$('#setupDot'); dot.className='setupDot '+({ok:'ok',warn:'warn',bad:'bad'}[sum.level]);
+  const advKeys=[['LABEL_STUDIO_URL','Label Studio 地址'],['LS_BIN','label-studio 程序路径'],['LS_DB','Label Studio 数据库(LS_DB)'],['LS_MEDIA_ROOT','Label Studio 媒体目录'],['ASR_PYTHON','ASR 用的 Python'],['VOICE_PY','声纹用的 Python'],['LS_READ_ONLY_TASKS','受保护的 task（逗号分隔）']];
+  if(!$('#setupAdv').dataset.ready||$('#setupAdv').dataset.root!==st.root){
+    $('#setupAdv').innerHTML=advKeys.map(([k,l])=>`<label>${l}<input data-envkey="${k}" value="${setupEsc(st.env[k]||'')}" placeholder="${k}"></label>`).join('');
+    $('#setupAdv').dataset.ready='1'; $('#setupAdv').dataset.root=st.root;
+  }
+}
+async function setupRefresh(){
+  try{ const st=await setupCall('/status'); setupRender(st); return st; }
+  catch(e){
+    $('#setupBody').innerHTML='';
+    $('#setupBanner').innerHTML=`<div class="setupBanner bad">${setupEsc(e.message)}</div>`;
+    $('#setupDot').className='setupDot bad'; $('#setupSub').textContent='';
+  }
+}
+function setupLogShow(text){ const el=$('#setupLog'); el.hidden=false; el.textContent=text; el.scrollTop=el.scrollHeight; }
+async function setupPollJob(id){
+  setupJob=id; clearInterval(setupTimer);
+  const tick=async()=>{
+    try{
+      const j=await setupCall('/jobs/'+id);
+      setupLogShow(`【${j.title}】${j.state==='running'?' 进行中…':j.ok?' 已完成':' 失败'}\n`+j.log);
+      if(j.state!=='running'){ clearInterval(setupTimer); setupJob=null; await setupRefresh(); }
+    }catch(e){ clearInterval(setupTimer); setupLogShow('读取任务进度失败：'+e.message); }
+  };
+  await tick(); setupTimer=setInterval(tick,1500);
+}
+async function setupOpen(){
+  $('#setupModal').hidden=false; $('#setupLog').hidden=true;
+  $('#setupBody').innerHTML='<div class="sub" style="padding:12px">检测中…</div>';
+  await setupRefresh();
+}
+$('#setupBtn').addEventListener('click',setupOpen);
+$('#setupClose').addEventListener('click',()=>{$('#setupModal').hidden=true;});
+$('#setupModal').addEventListener('click',e=>{if(e.target.id==='setupModal')$('#setupModal').hidden=true;});
+$('#setupRefresh').addEventListener('click',setupRefresh);
+$('#setupBody').addEventListener('click',async e=>{
+  const btn=e.target.closest('button'); if(!btn||btn.disabled) return;
+  btn.disabled=true; const old=btn.textContent; btn.textContent='处理中…';
+  try{
+    if(btn.dataset.svc){
+      const out=await setupCall('/service',{name:btn.dataset.svc,op:btn.dataset.op});
+      setupLogShow(out.message||'完成');
+      await setupRefresh();
+    }else if(btn.dataset.act==='set_env'){
+      await setupCall('/action',{action:'set_env',env:JSON.parse(btn.dataset.env)}); await setupRefresh();
+    }else if(btn.dataset.act){
+      if(['install_asr','download_models','install_label_studio'].includes(btn.dataset.act)&&!confirm('这个操作需要联网并下载较大的文件，可能持续几分钟到十几分钟，期间请不要关闭这个页面。继续？')){ return; }
+      const out=await setupCall('/action',{action:btn.dataset.act});
+      await setupPollJob(out.job);
+    }
+  }catch(err){ setupLogShow('失败：'+err.message); }
+  finally{ btn.disabled=false; btn.textContent=old; }
+});
+$('#setupSave').addEventListener('click',async()=>{
+  const env={}; document.querySelectorAll('#setupAdv input[data-envkey]').forEach(i=>{env[i.dataset.envkey]=i.value.trim();});
+  try{ const out=await setupCall('/config',{env}); $('#setupSaveMsg').textContent=out.message; await setupRefresh(); }
+  catch(e){ $('#setupSaveMsg').textContent='保存失败：'+e.message; }
+});
+(async()=>{ try{ const st=await setupCall('/status'); setupRender(st); const sum=setupSummarize(st); if(sum.level==='bad' && !localStorage.getItem('asr-setup-seen')){ localStorage.setItem('asr-setup-seen','1'); setupOpen(); } }catch(e){ $('#setupDot').className='setupDot bad'; } })();
 
 // ---------------- voiceprint: grouped confirmation ----------------
 const VP_ENDPOINT='http://127.0.0.1:8769';

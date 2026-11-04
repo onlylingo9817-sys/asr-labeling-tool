@@ -17,7 +17,6 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-import sherpa_onnx
 from funasr import AutoModel
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -33,8 +32,6 @@ def _env_json(name):
 
 AUDIO_OVERRIDES = {int(k): ROOT/v for k, v in _env_json('VOICE_AUDIO_JSON').items()}
 STORE = Path(os.environ.get('VOICEPRINTS_FILE') or str(ROOT/'work/voiceprints.json'))
-SEG_MODEL = Path(os.environ.get('SEG_MODEL') or str(ROOT/'work/models/sherpa-onnx-pyannote-segmentation-3-0/model.onnx'))
-EMB_MODEL = Path(os.environ.get('EMB_MODEL') or str(ROOT/'work/models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx'))
 DIAR_CACHE = Path(os.environ.get('DIAR_CACHE') or str(ROOT/'work/outputs'))
 LOCK = threading.Lock()
 MODEL = None
@@ -176,29 +173,6 @@ def embed(task_id, start, end, project_id=None):
     vec = embed_cached(src, start, end)
     save_emb_store(src)
     return vec
-
-def diarize(task_id, k, project_id=None):
-    """Diarize one recording; cache the turns. k<=0 means auto."""
-    cache = DIAR_CACHE/f'diar_task{task_id}_k{k}.json'
-    if cache.exists():
-        return json.loads(cache.read_text(encoding='utf-8'))
-    wav = audio_for(task_id, project_id)
-    samples, sr = sf.read(str(wav), dtype='float32')
-    if samples.ndim > 1: samples = samples.mean(1)
-    seg = sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
-        pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(model=str(SEG_MODEL)),
-        num_threads=2)
-    emb = sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(EMB_MODEL), num_threads=2)
-    cl = sherpa_onnx.FastClusteringConfig(num_clusters=int(k), threshold=0.5)
-    cfg = sherpa_onnx.OfflineSpeakerDiarizationConfig(
-        segmentation=seg, embedding=emb, clustering=cl,
-        min_duration_on=0.4, min_duration_off=0.4)
-    sd = sherpa_onnx.OfflineSpeakerDiarization(cfg)
-    turns = [{'start': float(t.start), 'end': float(t.end), 'cluster': int(t.speaker)}
-             for t in sd.process(samples).sort_by_start_time()]
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    cache.write_text(json.dumps(turns, ensure_ascii=False), encoding='utf-8')
-    return turns
 
 def normv(v): return v/(np.linalg.norm(v)+1e-9)
 

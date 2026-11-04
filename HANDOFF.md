@@ -311,6 +311,18 @@ N90 最近重新生成了 ASR：
 
 **残留碎片修复（2026-11-04）**：草稿里可能有极短（<80ms）且无文字、或落在父句之外的插话碎片，页面上看不见却会让同步预检失败。现在加载草稿和同步前都会删除这类碎片，并让句子范围覆盖剩余片段；合并时起止同时覆盖所有片段。仍失败时提示刷新或“重置为底稿”。
 
+### 11. 2026-11-04 环境与服务面板
+
+- 新增 `work/setup_server.py`（发布版 `app/setup_server.py`），端口 **8766**，由 `start_all.sh` 一并启动；页面右上角「⚙ 环境与服务」使用它。
+- 检测：Python、ffmpeg/ffprobe、screen、ASR/声纹运行环境（funasr/torch/numpy/scipy/soundfile）、模型缓存、Label Studio（地址/程序/数据库）、各服务状态。
+- 一键操作：安装 ASR/声纹环境（建 `.venv` 并写入 `ASR_PYTHON`/`VOICE_PY`）、安装/启动 Label Studio、预下载模型、安装 ffmpeg（仅 macOS+Homebrew）、启用/关闭/重启服务、保存 `.env`。Linux 的 ffmpeg 只给命令，不提权。
+- 安装类操作带实时日志，同一时间只允许一个任务；编辑器服务不允许在面板里停止。
+- 声纹服务不再依赖 `sherpa-onnx` 与手动准备的分割/嵌入模型（`diarize()` 无调用，已删除）；`requirements.txt` 补齐 torch/torchaudio/scipy。Cam++ 模型首次使用自动下载。
+- 修复：发布版 `sync_server.py` 之前找不到 `preprocess`，拉取时不会自动转音频/跑 ASR；现在会把 `app/`、`work/` 加入搜索路径。
+- 验证：在全新目录 + 全新 venv 上，通过面板接口一键安装完成，funasr/torch 等可导入，声纹 `/group` 对示例音频成功；检测、启用/关闭声纹、配置读写、离线提示均在浏览器验证。
+
+**未验证**：Linux 全流程；Windows；面板里“安装 Label Studio / 预下载模型”的实际执行（接口与日志流程已实现，未真正跑完）；`screen` 缺失时服务由面板以普通后台进程启动，关闭终端后的存活情况未测。
+
 ---
 
 ## 六、代码与发布版位置
@@ -323,6 +335,7 @@ N90 最近重新生成了 ASR：
 - 预处理与 ASR 转换：`work/preprocess.py`
 - 三段窗口：`work/make_segments.py`
 - 声纹服务：`work/voiceprint_server.py`
+- 环境与服务面板后端：`work/setup_server.py`（端口 8766）
 - 当前数据：`work/editor/data.json`
 
 ### 发布版

@@ -26,5 +26,6 @@ stop_one() {
 }
 
 stop_one editor 8765 serve_editor.py
+stop_one setup 8766 setup_server.py
 [[ "${ENABLE_SYNC:-0}" == "1" ]] && stop_one sync 8768 sync_server.py || true
 [[ "${ENABLE_VOICEPRINT:-0}" == "1" ]] && stop_one voiceprint 8769 voiceprint_server.py || true

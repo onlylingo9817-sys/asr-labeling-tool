@@ -28,17 +28,17 @@ if LS_BIN == 'label-studio' and not shutil.which(LS_BIN):
     candidate = Path.home()/'.venvs'/'label-studio'/'bin'/'label-studio'
     if candidate.exists(): LS_BIN = str(candidate)
 EDITOR_DATA = Path(os.environ.get('EDITOR_DATA_PATH', str(ROOT/'app'/'editor'/'data.json')))
+import sys
+for _extra in (ROOT/'app', ROOT/'work', ROOT):
+    if _extra.is_dir() and str(_extra) not in sys.path:
+        sys.path.append(str(_extra))
+PREPROCESS_ERROR = ''
 try:
     from preprocess import prepare_audio, build_asr_recording
-except Exception:
-    try:
-        import sys
-        sys.path.insert(0, str(ROOT))
-        sys.path.insert(0, str(ROOT/'work'))
-        from preprocess import prepare_audio, build_asr_recording
-    except Exception:
-        prepare_audio = None
-        build_asr_recording = None
+except Exception as _exc:
+    PREPROCESS_ERROR = str(_exc)
+    prepare_audio = None
+    build_asr_recording = None
 
 def task_audio_map():
     """Return task_id -> Label Studio audio path from local editor data.
