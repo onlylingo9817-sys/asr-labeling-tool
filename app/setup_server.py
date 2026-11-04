@@ -29,7 +29,7 @@ SERVICES = {
     'voiceprint': {'port': 8769, 'script': 'voiceprint_server.py', 'label': '声纹分组',      'flag': 'ENABLE_VOICEPRINT'},
 }
 SECRET_KEYS = {'LS_TOKEN'}
-ENV_KEYS = ['ENABLE_SYNC', 'ENABLE_VOICEPRINT', 'LABEL_STUDIO_URL', 'LS_BIN', 'LS_DB', 'LS_MEDIA_ROOT',
+ENV_KEYS = ['VOICE_MODEL', 'ENABLE_SYNC', 'ENABLE_VOICEPRINT', 'LABEL_STUDIO_URL', 'LS_BIN', 'LS_DB', 'LS_MEDIA_ROOT',
             'LS_READ_ONLY_TASKS', 'AUTO_ASR', 'ASR_PYTHON', 'VOICE_PY']
 LOCK = threading.RLock()
 JOBS: dict[str, dict] = {}
@@ -125,6 +125,33 @@ def best_python():
             best = (score, py, info)
     return best
 
+VOICE_MODELS = {
+    'cam': {'label': 'Cam++（默认，轻量）', 'desc': '体积小（约 28 MB），默认使用。', 'parts': ['cam'], 'size_mb': 28},
+    'eres2net_large': {'label': 'ERes2Net-large', 'desc': '模型更大（约 116 MB）。在我们的评测里与 Cam++ 的差异没有统计显著性。', 'parts': ['eres2net_large'], 'size_mb': 116},
+    'fusion': {'label': 'Cam++ + ERes2Net 融合', 'desc': '同时运行两个模型，耗时最长；评测里数字上最高，但差异没有统计显著性。', 'parts': ['cam', 'eres2net_large'], 'size_mb': 144},
+}
+VOICE_PARTS = {
+    'cam': {'model_id': 'iic/speech_campplus_sv_zh-cn_16k-common', 'dir': 'speech_campplus_sv_zh-cn_16k-common', 'file': 'campplus_cn_common.bin'},
+    'eres2net_large': {'model_id': 'iic/speech_eres2net_large_200k_sv_zh-cn_16k-common', 'dir': 'speech_eres2net_large_200k_sv_zh-cn_16k-common', 'file': 'pretrained_eres2net.pt'},
+}
+
+def voice_part_present(part) -> bool:
+    spec = VOICE_PARTS[part]
+    base = Path(os.environ.get('MODELSCOPE_CACHE') or Path.home()/'.cache'/'modelscope')
+    for root in (base/'models', base/'hub'/'models', base/'hub', base):
+        for cand in (root/('iic--'+spec['dir'])/'snapshots'/'master'/spec['file'], root/'iic'/spec['dir']/spec['file'], root/spec['dir']/spec['file']):
+            if cand.exists():
+                return True
+    return False
+
+def voice_model_status():
+    cur = env_value('VOICE_MODEL', 'cam')
+    if cur not in VOICE_MODELS: cur = 'cam'
+    return {'current': cur, 'models': [
+        {'key': k, 'label': m['label'], 'desc': m['desc'], 'size_mb': m['size_mb'],
+         'downloaded': all(voice_part_present(p) for p in m['parts']), 'current': k == cur}
+        for k, m in VOICE_MODELS.items()]}
+
 MODEL_IDS = {
     'asr':  ['speech_paraformer-large', 'speech_seaco_paraformer'],
     'vad':  ['speech_fsmn_vad_zh-cn-16k'],
@@ -215,9 +242,10 @@ def status() -> dict:
     add('asr_models', 'ASR 模型（语音识别/断句/标点）', asr_models,
         '已缓存' if asr_models else '首次使用时会自动下载（约 1–2 GB），也可现在预下载',
         None if asr_models or not asr_ready else {'action': 'download_models', 'label': '预下载模型'}, optional=True, group='asr')
-    add('spk_model', '声纹模型（Cam++）', models_ok['spk'],
-        '已缓存' if models_ok['spk'] else '首次使用声纹分组时会自动下载（约 30 MB）',
-        None if models_ok['spk'] or not asr_ready else {'action': 'download_models', 'label': '预下载模型'}, optional=True, group='asr')
+    vm = voice_model_status(); cur = next(m for m in vm['models'] if m['current'])
+    add('spk_model', f"声纹模型（{cur['label']}）", cur['downloaded'],
+        '已下载' if cur['downloaded'] else f"尚未下载（约 {cur['size_mb']} MB），首次分组时会自动下载",
+        None, optional=True, group='asr')
     add('auto_asr', '拉取时自动生成 ASR 底稿', env.get('AUTO_ASR', '1') != '0',
         '没有 Annotation 的 task 拉取后自动识别' if env.get('AUTO_ASR', '1') != '0' else '已关闭：拉取后只带音频，需手动点“生成 ASR 底稿”',
         {'action': 'set_env', 'label': '关闭' if env.get('AUTO_ASR', '1') != '0' else '开启',
@@ -246,7 +274,7 @@ def status() -> dict:
                          'running': st['up'], 'port_conflict': (st['port_open'] and not st['up']),
                          'blocked': blocked})
     summary_ready = bool(ff and fp)
-    return {'ok': True, 'system': SYSTEM, 'root': str(ROOT), 'items': items, 'services': services,
+    return {'ok': True, 'voiceModels': voice_model_status(), 'system': SYSTEM, 'root': str(ROOT), 'items': items, 'services': services,
             'env': {k: env.get(k, '') for k in ENV_KEYS}, 'ready': {'basic': summary_ready, 'asr': asr_ready,
             'sync': ls_up and sync_on, 'voiceprint': voice_on and asr_ready}}
 
@@ -352,6 +380,21 @@ def action_start_label_studio():
             time.sleep(2)
         raise RuntimeError('等待超时，请查看日志：' + str(log_path))
     run_job(job, [('启动 Label Studio', start, {})]); return job
+
+def action_download_voice_model(model_key):
+    if model_key not in VOICE_MODELS:
+        raise RuntimeError('未知的声纹模型')
+    job = new_job('下载声纹模型：' + VOICE_MODELS[model_key]['label'])
+    best = best_python()
+    if not best:
+        def nope(log): raise RuntimeError('请先安装 ASR / 声纹运行环境')
+        run_job(job, [('检查环境', nope, {})]); return job
+    ids = [VOICE_PARTS[p]['model_id'] for p in VOICE_MODELS[model_key]['parts']]
+    code = ("from modelscope import snapshot_download\n"
+            f"for mid in {ids!r}:\n"
+            "    print('下载', mid, flush=True)\n"
+            "    print('完成', snapshot_download(mid), flush=True)\n")
+    run_job(job, [('下载模型文件（需联网）', [best[1], '-c', code], {})]); return job
 
 def action_download_models():
     job = new_job('预下载 ASR / 声纹模型')
@@ -486,6 +529,30 @@ def handle(method, path, payload):
         except Exception as exc:
             return 400, {'ok': False, 'error': str(exc)}
         return 200, res
+    if path == '/voice_model':
+        key = payload.get('model')
+        if key not in VOICE_MODELS:
+            return 400, {'ok': False, 'error': '未知的声纹模型'}
+        missing = [p for p in VOICE_MODELS[key]['parts'] if not voice_part_present(p)]
+        if missing:
+            with LOCK:
+                running = [j for j in JOBS.values() if j['state'] == 'running']
+            if running: return 409, {'ok': False, 'error': f"已有任务在进行：{running[0]['title']}"}
+            try: job = action_download_voice_model(key)
+            except Exception as exc: return 400, {'ok': False, 'error': str(exc)}
+            return 200, {'ok': True, 'job': job['id'], 'needsDownload': True,
+                         'message': '模型尚未下载，已开始下载。下载完成后请再点一次「使用」。'}
+        write_env({'VOICE_MODEL': key})
+        restarted = False
+        if service_running('voiceprint')['up']:
+            try:
+                try: stop_service('voiceprint')
+                except RuntimeError: pass
+                start_service('voiceprint'); restarted = True
+            except Exception as exc:
+                return 200, {'ok': True, 'message': f'已切换为 {VOICE_MODELS[key]["label"]}，但声纹服务重启失败：{exc}', 'restarted': False}
+        return 200, {'ok': True, 'restarted': restarted,
+                     'message': f'已切换为 {VOICE_MODELS[key]["label"]}' + ('，声纹服务已重启。' if restarted else '；下次启用声纹服务时生效。') + '更换模型后，需要重新点一次「开始分组」。'}
     if path == '/config':
         env = {k: (v if v != '' else None) for k, v in (payload.get('env') or {}).items() if k in ENV_KEYS}
         write_env(env); return 200, {'ok': True, 'message': '已保存。部分设置需重启对应服务后生效。'}

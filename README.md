@@ -90,6 +90,12 @@ VOICE_AUDIO_JSON={"5":"app/editor/audio/my.wav"}
 
 `/group`、`/enroll`、`/candidates`、`/apply` 建议同时传 `taskId` 和 `projectId`；旧客户端只传 `taskId` 仍然兼容。
 
+### 声纹模型
+
+默认使用 Cam++（约 28 MB）。可在页面「⚙ 环境与服务」→「声纹模型」里切换为 ERes2Net-large 或二者融合，也可在 `.env` 设置 `VOICE_MODEL=cam|eres2net_large|fusion`。模型文件首次使用时从 ModelScope 下载。
+
+我们用两条人工标注录音（共 285 句，销售 vs 顾客）评测过：三个模型的正确率在 91%–92% 之间，**差异没有统计显著性**，换模型不保证更准。ERes2Net 的网络定义来自 3D-Speaker（Apache-2.0），见 `app/voiceprint/speakerlab/`。
+
 声纹结果只是辅助分组，短插话和重叠话仍会出错，不能替代人工试听。
 
 ## 目录

@@ -59,6 +59,10 @@ input[type=range].scrubbing{accent-color:var(--amber)}
 .nudge{display:flex;gap:3px;margin-top:3px}
 .nudge button{font-size:10px;line-height:1;padding:2px 5px;border-radius:5px;color:var(--muted)}
 .nudge button:hover{color:var(--blue);border-color:#93b4ff}
+.tagSep{width:1px;background:var(--line);margin:0 2px}
+.tagRow{align-items:center}
+.tagLabel{font-size:11px;color:var(--muted)}
+.tagbtn.quick{border-style:dashed}
 .tagbtn.splitAt{border-color:#b7c8ff;color:#16389c}
 .nested{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
 .candRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}
@@ -142,6 +146,13 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
 .setupBanner.warn{background:#fff8e8;border:1px solid #f0d69b;color:#6b4a12}
 .setupBanner.ok{background:#e9f8ed;border:1px solid #b6e3c2;color:#12612c}
 .setupBanner.bad{background:#fdecec;border:1px solid #f5b5b5;color:#8a1c1c}
+.modelCard{border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin:6px 0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+.modelCard.cur{border-color:#b7c8ff;background:#f5f8ff}
+.modelCard .t{font-weight:600}
+.modelCard .d{font-size:12px;color:var(--muted)}
+.modelCard .meta{font-size:11px;color:#94a3b8}
+.modelCard button{font-size:12px;padding:4px 10px}
+.modelNote{font-size:12px;color:#6b4a12;background:#fff8e8;border:1px solid #f0d69b;border-radius:9px;padding:8px 11px;margin:6px 0}
 .setupAdv{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
 .setupAdv label{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px;align-items:center;font-size:12px;color:var(--muted);margin:6px 0}
 .setupAdv input{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:7px;padding:5px 8px;width:100%}
@@ -253,7 +264,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
       <div><span class="kbd">M</span> 与下一句合并（拆错了就合并后重拆）</div>
       <div><span class="kbd">⌘Z</span> 撤销上一步</div>
       <div>自动合并：同一说话人且间隔≤1秒</div>
-      <div><span class="kbd">C</span> 当前句为顾客插话 <span class="kbd">U</span> 分不清</div>
+      <div><span class="kbd">C</span> 设为顾客1并加 overlap（抢话）　<span class="kbd">U</span> 仅设说话人为 UNKNOWN（不加标签）</div>
       <div>标签值直接使用 Label Studio 的英文值：overlap / accent / unclear / cut。</div>
       <div>“已有标注”取自本项目已标区间；其余为机器建议，必须听音确认。</div>
       <div>同步会按页面当前完整状态覆盖更新；标签也会一起写回。</div>
@@ -673,13 +684,17 @@ function buildRow(u,i){
         <textarea class="txt" data-i="${i}" rows="1" title="${u.hasInterjection?'父句完整区间：'+fmtMs(u.start)+' → '+fmtMs(u.end):''}">${escapeHtml(u.bodyText||u.text||'')}</textarea>
         ${nestedChips(u,i)}
         <div class="candRow" data-i="${i}">${candButtons(u,i)}</div>
-        <div class="tags" title="标签值写回 Label Studio 的英文 choices">
+        <div class="tags" title="编辑操作">
           <button class="tagbtn split" data-i="${i}" title="把光标处或选中位置拆成两句（S）。位置按字数比例估算，可能不准">✂ 按光标拆(S)</button>
           <button class="tagbtn splitAt" data-i="${i}" data-splittime="1" title="先播放到想拆的时间点并暂停，再点这里：按播放位置精确拆分（T）">⏱ 按播放位置拆(T)</button>
           <button class="tagbtn merge" data-i="${i}" title="与下一句合并（M）">⤵ 合并(M)</button>
-          <button class="tagbtn quick ${u.speaker.startsWith('CUSTOMER')?'on':''}" data-i="${i}" data-quick="customer">顾客插话(C)</button>
-          <button class="tagbtn quick" data-i="${i}" data-quick="unknown">分不清(U)</button>
-          ${TAGS.map(([k,label])=>`<button class="tagbtn ${u.tags.includes(k)?'on':''}" data-i="${i}" data-tag="${k}" title="${label}">${k}</button>`).join('')}
+          <span class="tagSep"></span>
+          <button class="tagbtn quick ${u.speaker==='CUSTOMER_1'?'on':''}" data-i="${i}" data-quick="customer" title="快捷操作（C）：把说话人设为 CUSTOMER_1，并同时加上 overlap 标签（抢话）。这是两个动作，不是标签本身">→ 顾客1 + 抢话(C)</button>
+          <button class="tagbtn quick ${u.speaker==='UNKNOWN'&&isConfirmed(u)?'on':''}" data-i="${i}" data-quick="unknown" title="快捷操作（U）：只把说话人设为 UNKNOWN，不会添加 unclear 标签。要标“听不清”请用右边的 unclear 标签">→ 说话人未知(U)</button>
+        </div>
+        <div class="tags tagRow" title="标签（值直接写回 Label Studio 的英文 choices）">
+          <span class="tagLabel">标签</span>
+          ${TAGS.map(([k,label])=>`<button class="tagbtn ${u.tags.includes(k)?'on':''}" data-i="${i}" data-tag="${k}" title="${label}（${k}）">${k}</button>`).join('')}
         </div>
       </div>`;
     row.addEventListener('click',e=>{if(e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='BUTTON')return; seekTo(i);});
@@ -1485,6 +1500,15 @@ function setupRenderServices(st){
   }).join('');
   return rows;
 }
+function setupRenderModels(vm){
+  const cards=vm.models.map(m=>{
+    const btn=m.current?'<span class="setupSwitch on">使用中</span>'
+      :(m.downloaded?`<button class="go" data-vmodel="${m.key}">使用</button>`:`<button data-vmodel="${m.key}">下载并使用（约 ${m.size_mb} MB）</button>`);
+    const state=m.downloaded?'已下载':'未下载';
+    return `<div class="modelCard ${m.current?'cur':''}"><div><div class="t">${setupEsc(m.label)}</div><div class="d">${setupEsc(m.desc)}</div><div class="meta">${state} · 约 ${m.size_mb} MB</div></div><div>${btn}</div></div>`;
+  }).join('');
+  return `<div class="setupGroup">声纹模型（用于「声纹分组」）</div>${cards}<div class="modelNote">说明：我们用两条有人工标注的录音（共 285 句，销售 vs 顾客）评测过，三个模型的正确率在 91%–92% 之间，差异<b>没有统计显著性</b>，不保证换模型一定更准。短句（&lt;1 秒）、重叠话、顾客之间的区分仍然容易出错。切换后需重新点一次「开始分组」。</div>`;
+}
 function setupRender(st){
   const groups={base:'基础',asr:'ASR 与声纹',sync:'Label Studio'};
   let html='';
@@ -1499,6 +1523,7 @@ function setupRender(st){
       }else if(i.fix&&i.fix.manual){ act=`<span class="manual">${setupEsc(i.fix.manual)}</span>`; }
       return `<div class="setupItem"><div class="ico">${SETUP_ICON[i.state]||'➖'}</div><div><div class="t">${setupEsc(i.title)}</div><div class="d">${setupEsc(i.detail)}</div></div><div class="act">${act}</div></div>`;
     }).join('');
+    if(g==='asr'&&st.voiceModels){ html+=setupRenderModels(st.voiceModels); }
     if(g==='sync'){ html+=`<div class="setupGroup">服务</div>`+setupRenderServices(st); }
   }
   $('#setupBody').innerHTML=html;
@@ -1545,7 +1570,11 @@ $('#setupBody').addEventListener('click',async e=>{
   const btn=e.target.closest('button'); if(!btn||btn.disabled) return;
   btn.disabled=true; const old=btn.textContent; btn.textContent='处理中…';
   try{
-    if(btn.dataset.svc){
+    if(btn.dataset.vmodel){
+      const out=await setupCall('/voice_model',{model:btn.dataset.vmodel});
+      if(out.job){ setupLogShow(out.message||'开始下载'); await setupPollJob(out.job); }
+      else { setupLogShow(out.message||'完成'); await setupRefresh(); window._vpGroups=[]; $('#vpGroups').innerHTML=''; }
+    }else if(btn.dataset.svc){
       const out=await setupCall('/service',{name:btn.dataset.svc,op:btn.dataset.op});
       setupLogShow(out.message||'完成');
       await setupRefresh();
@@ -1722,7 +1751,7 @@ $('#vpGroup').addEventListener('click',async()=>{
     const out=await res.json();
     if(!res.ok||!out.ok) throw new Error(out.error||('HTTP '+res.status));
     vpRenderGroups(out.groups);
-    $('#vpStatus').textContent=`分成 ${out.clusters} 组；高置信 ${out.sure}/${out.turns} 句。请逐组试听后再应用。`;
+    $('#vpStatus').textContent=`分成 ${out.clusters} 组；高置信 ${out.sure}/${out.turns} 句${out.modelLabel?'；模型：'+out.modelLabel:''}。请逐组试听后再应用。`;
   }catch(e){
     $('#vpStatus').textContent='失败：'+(e.name==='AbortError'?'等待超时，请稍后重试':e.message);
   }finally{
