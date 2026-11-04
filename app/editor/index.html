@@ -422,7 +422,7 @@ function loadRecording(taskId){
     const saved=JSON.parse(localStorage.getItem(editorKey(taskId,rec.projectId))||'null');
     rows=Array.isArray(saved)&&saved.length?saved:window.structuredClone(rec.utterances);
   }catch(e){ rows=window.structuredClone(rec.utterances); }
-  const repairedRows=migrateRows(rows);
+  const repairedRows=migrateRows(rows)+sanitizeRows(rows);
   data={taskId:rec.taskId,projectId:rec.projectId,title:rec.label,audio:rec.audio,duration:rec.duration,
         waveform:rec.waveform||'',windows:rec.windows||[],utterances:rows,source:'Label Studio'};
   localStorage.setItem(`asr-rec-${currentProject()||0}`,String(taskId));
@@ -464,6 +464,26 @@ async function pullFromLabelStudio(){
 
   }catch(e){ alert('拉取失败：'+e.message+'\\n请确认同步服务已启动，且 Label Studio 正在运行。'); }
   finally{ btn.disabled=false; btn.textContent=old; }
+}
+const MIN_SPAN=0.01;
+function sanitizeRows(rows){
+  // Remove pieces with no duration and widen zero-length sentences, so a stale
+  // draft can never block a sync. Returns how many rows were touched.
+  let fixed=0;
+  for(const u of rows){
+    let touched=false;
+    if(Array.isArray(u.pieces)){
+      const kept=u.pieces.filter(p=>Number(p.end)-Number(p.start)>=MIN_SPAN);
+      if(kept.length!==u.pieces.length){
+        touched=true;
+        if(kept.length){ u.pieces=kept; }
+        else{ u.pieces=[{text:u.text||u.bodyText||'',start:u.start,end:Math.max(u.end,u.start+MIN_SPAN),isInterjection:false}]; }
+      }
+    }
+    if(Number(u.end)-Number(u.start)<MIN_SPAN){ u.end=round3(Number(u.start)+MIN_SPAN); touched=true; }
+    if(touched) fixed++;
+  }
+  return fixed;
 }
 function migrateRows(rows){
   const isInt=p=>!!p && (p.isInterjection||p.interjection);
@@ -725,6 +745,8 @@ function splitAt(i){
     if(frac<=0){ rightPieces.push({...p}); continue; }
     if(frac>=1){ leftPieces.push({...p}); continue; }
     const cut=round3(p.start+(p.end-p.start)*frac);
+    if(cut<=p.start+0.001){ rightPieces.push({...p}); continue; }
+    if(cut>=p.end-0.001){ leftPieces.push({...p}); continue; }
     leftPieces.push({...p,end:cut,text:(p.text||'').slice(0,Math.max(0,Math.round(len*frac)))});
     rightPieces.push({...p,start:cut,text:(p.text||'').slice(Math.max(0,Math.round(len*frac)))});
   }
@@ -740,7 +762,7 @@ function splitAt(i){
   };
   const a=mk(leftPieces,u.start,cutTime);
   const b=mk(rightPieces,cutTime,u.end);
-  if(!a||!b) return;
+  if(!a||!b||a.end-a.start<0.01||b.end-b.start<0.01){ setSyncStatus('光标位置太靠近句首/句尾，无法拆分',true); return; }
   data.utterances.splice(i,1,a,b);
   persist(); render(); seekTo(i);
 }
@@ -1012,6 +1034,7 @@ async function syncToLabelStudio(){
   const source=winOnly?data.utterances.filter(u=>u.window&&u.window!=='full'):data.utterances;
   const outside=data.utterances.length-source.length;
   if(!source.length){ alert('三段窗口内没有句子可同步。取消勾选“仅同步三段内”可同步全部。'); return; }
+  sanitizeRows(data.utterances);
   const rows=syncRows(source);
   const base={projectId:data.projectId,taskId:data.taskId,utterances:rows,mode:'all'};
   btn.disabled=true; const old=btn.textContent; btn.textContent='检查中…';

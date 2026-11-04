@@ -161,7 +161,7 @@ def _format_range(rows):
     for idx,row in enumerate(rows):
         start=round(float(row['start']),3); end=round(float(row['end']),3)
         if start < 0 or end <= start:
-            raise ValueError(f'row {idx}: invalid time range {start}..{end}')
+            raise ValueError(f'第 {idx+1} 句时间范围无效（{start}–{end} 秒）。请刷新页面后重试。')
         speaker=(row.get('speaker') or 'UNKNOWN').strip()
         if not speaker:
             raise ValueError(f'row {idx}: empty speaker')
@@ -169,7 +169,10 @@ def _format_range(rows):
         for p in (row.get('pieces') or []):
             ps=round(float(p['start']),3); pe=round(float(p['end']),3)
             if ps < 0 or pe <= ps:
-                raise ValueError(f'row {idx}: invalid piece range {ps}..{pe}')
+                snippet=(p.get('text') or row.get('bodyText') or '').strip()[:14]
+                raise ValueError(
+                    f'第 {idx+1} 句（{start}–{end} 秒）里的片段“{snippet}”时间无效（{ps}–{pe} 秒，长度为 0）。'
+                    '页面已会自动清理这类片段，请刷新页面后重试。')
             # Allow a 20ms timing tolerance for hand-edited pieces, but never
             # accept an interjection that lives outside its parent sentence.
             if ps < start-0.020 or pe > end+0.020:
