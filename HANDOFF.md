@@ -173,7 +173,7 @@ N90 最近重新生成了 ASR：
 
 当前 Annotation：
 
-- task 5：Annotation id=1，2 个 region（1 句），**人工原始标注，禁止删除/覆盖**
+- task 5：Annotation id=1，40 个结果（约 2026-11-04 01:53 UTC 更新，时间与参考标注一致），**人工标注，禁止删除/覆盖**；`.env` 已设 `LS_READ_ONLY_TASKS=5`
 - task 6：Annotation id=5，448 个 region / 219 句（最近一次同步的旧版；本地已重新 ASR 为 941 句，尚未同步）
 - task 7：Annotation id=4，354 个 region / 177 句
 - task 8：无 Annotation
@@ -285,6 +285,25 @@ N90 最近重新生成了 ASR：
 - 手动新增句子自动归入所在窗口。
 
 回归：浏览器全流程通过（分组→应用→撤销、筛选、快捷键、跟随播放），无控制台错误；`test_sync_payload.py` 通过。真实 Annotation 未写入。测试产生的声纹样本已清空（备份在 `work/sync_backups/voiceprints-test-pollution-*.json`），`work/voiceprints.json` 为空库。
+
+### 10. 2026-11-04 修复轮（同步语义 / 报错 / 自动合并）
+
+**同步语义（以用户最终结果为准）**：点「同步」就是把当前页面（默认三段窗口内）的内容作为最终结果写入。机器建议若没改，不需要再逐句点确认；同步成功后这些句子会自动标为“已随同步确认”。同步前弹窗会列出：写入句数、未逐句确认的句数、仍为 UNKNOWN 的句数、标签数，以及将被替换的现有 Annotation（id、结果数、是否本账号创建）。
+
+**修复**：
+- 自动合并/手动合并后 `start` 取两句较小值，不再出现插话片段落在父句之外。
+- 加载草稿时自动修复“片段超出本句”的旧数据，并在状态栏提示。
+- 同步前先做一次 dry-run 检查（`/sync` 新增 `checkExisting`），不通过则不写入。
+- 报错改为精确信息（第几句、时间、文字片段）；连不上同步服务才提示启动服务，不再对所有失败都说“请确认同步服务已启动”。
+- `.env` 补上 `LS_READ_ONLY_TASKS=5`，同步服务不再默认允许覆盖 task 5 的 Annotation（覆盖需显式确认或 `ALLOW_TASK5_REPLACE=1`）。
+
+**task 5（N70-5）排查结论**：
+- Annotation id=1 当前有 40 个结果（22 句 SALES_1、18 句 CUSTOMER_1，2.3–124.3 秒），时间与 `work/task5_reference.json` 40 段逐一相同，region id 为 Label Studio 前端风格（非本工具的 `s00000`），`lead_time` 约 3178 秒。
+- 所以它更像是 **用户在 Label Studio 里人工标注后保存**的，不是本工具写入，也不能说“被覆盖”。此前交接文档写的“1 个结果/2 个 region”是旧快照。本工具的同步日志在 11-03 19:47 之后到 11-04 09:51 前没有对 task 5 的 `/sync` 成功记录。
+- N70-5 本地数据 191 句，没有越界片段、重叠或乱序；只有 3 句为 reference 确认。
+- 窗口之间 751.6 秒、813.1 秒空白属正常。
+
+**另发现（未处理）**：task 7（SU7-6）11-03 20:23 被重新生成 ASR，本地由 208 句（已有机器说话人）变为 559 句全 UNKNOWN（备份：`work/sync_backups/editor-task7-20261103-202311-before-asr.json`）。如需沿用旧说话人，需要从备份迁移。
 
 ---
 

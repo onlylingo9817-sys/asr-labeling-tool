@@ -173,7 +173,10 @@ def _format_range(rows):
             # Allow a 20ms timing tolerance for hand-edited pieces, but never
             # accept an interjection that lives outside its parent sentence.
             if ps < start-0.020 or pe > end+0.020:
-                raise ValueError(f'row {idx}: piece {ps}..{pe} outside parent {start}..{end}')
+                snippet=(row.get('bodyText') or row.get('text') or '').strip()[:14]
+                raise ValueError(
+                    f'第 {idx+1} 句（{start}–{end} 秒，“{snippet}”）的插话片段 {ps}–{pe} 秒超出了本句范围。'
+                    '请在页面找到该时间点，拆出或删除该插话后再同步。')
             pieces.append({'start':max(start,ps),'end':min(end,pe),
                            'text':(p.get('text') or '').strip(),
                            'speaker':(p.get('speaker') or speaker).strip(),
@@ -254,7 +257,7 @@ def merge_into_annotation(existing, rows):
         if touched: changed+=1
     return merged, changed, added
 
-def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=False):
+def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=False, check_existing=False):
     """Write confirmed rows as Annotation, pending rows as Prediction.
 
     Existing Annotations are never PATCHed unless replace_annotation=true. Task 5
@@ -272,6 +275,12 @@ def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=Fals
           'prediction':None,'taggedNotInAnnotation':False,'dryRun':bool(dry_run),
           'annotationResult':to_result(ann_rows) if ann_rows else []}
     if dry_run:
+        if check_existing:
+            try:
+                plan['existing']=[{'id':a.get('id'),'items':len(a.get('result') or []),'mine':is_mine(a)}
+                                  for a in (api(f'/api/tasks/{task_id}/annotations/') or [])]
+            except Exception:
+                plan['existing']=[]
         return plan
 
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -550,7 +559,8 @@ class Handler(BaseHTTPRequestHandler):
             data = sync(
                 task_id, rows, mode,
                 replace_annotation=bool(payload.get('replaceAnnotation')),
-                dry_run=bool(payload.get('dryRun')))
+                dry_run=bool(payload.get('dryRun')),
+                check_existing=bool(payload.get('checkExisting')))
             self._send(200, {'ok':True, **data})
         except PermissionError as e:
             self._send(409, {'ok':False,'error':str(e),'code':'annotation_conflict'})

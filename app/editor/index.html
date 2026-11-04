@@ -422,7 +422,7 @@ function loadRecording(taskId){
     const saved=JSON.parse(localStorage.getItem(editorKey(taskId,rec.projectId))||'null');
     rows=Array.isArray(saved)&&saved.length?saved:window.structuredClone(rec.utterances);
   }catch(e){ rows=window.structuredClone(rec.utterances); }
-  migrateRows(rows);
+  const repairedRows=migrateRows(rows);
   data={taskId:rec.taskId,projectId:rec.projectId,title:rec.label,audio:rec.audio,duration:rec.duration,
         waveform:rec.waveform||'',windows:rec.windows||[],utterances:rows,source:'Label Studio'};
   localStorage.setItem(`asr-rec-${currentProject()||0}`,String(taskId));
@@ -437,6 +437,9 @@ function loadRecording(taskId){
   else { waveimg.removeAttribute('src'); waveimg.alt='该录音暂无波形图'; }
   active=-1; window._filter=undefined; window._vpGroups=[];
   $('#vpGroups').innerHTML=''; audio.currentTime=0; setSyncStatus('');
+  const repairKey=`${rec.projectId}-${rec.taskId}`;
+  if(repairedRows){ window._repairNote={key:repairKey,text:`已自动修复 ${repairedRows} 句的时间范围（插话片段超出本句），请核对后再同步`}; persist(); }
+  if(window._repairNote&&window._repairNote.key===repairKey) setSyncStatus(window._repairNote.text,true);
   renderFilters(); render(); paintTime(0); syncPlayButtons();
 }
 async function pullFromLabelStudio(){
@@ -464,6 +467,7 @@ async function pullFromLabelStudio(){
 }
 function migrateRows(rows){
   const isInt=p=>!!p && (p.isInterjection||p.interjection);
+  let repaired=0;
   for(const u of rows){
     u.tags=Array.isArray(u.tags)?u.tags:[];
     u.pieces=Array.isArray(u.pieces)?u.pieces:[];
@@ -473,6 +477,8 @@ function migrateRows(rows){
     u.pieces=u.pieces.map(p=>({...p,text:p.text||'',
       start:round3(Number(p.start)),end:round3(Number(p.end)),
       isInterjection:isInt(p)}));
+    const lo=Math.min(...u.pieces.map(p=>p.start)), hi=Math.max(...u.pieces.map(p=>p.end));
+    if(lo<u.start-0.02||hi>u.end+0.02){ u.start=round3(Math.min(u.start,lo)); u.end=round3(Math.max(u.end,hi)); repaired++; }
     u.bodyText=u.pieces.filter(p=>!p.isInterjection).map(p=>p.text).join('')||u.bodyText||u.text||'';
     u.hasInterjection=u.pieces.some(p=>p.isInterjection);
     if(!u.speaker) u.speaker='UNKNOWN';
@@ -487,6 +493,7 @@ function migrateRows(rows){
       if(p.reviewed===undefined) p.reviewed=u.reviewed;
     });
   }
+  return repaired;
 }
 function renderFilters(){
   const el=$('#filters'); if(!el) return;
@@ -609,6 +616,7 @@ function mergeRows(a,b){
   const {pieces,bodyText,hasInterjection}=composition(a,b);
   return {
     ...a,
+    start:Math.min(a.start,b.start),
     end:Math.max(a.end,b.end),
     text:pieces.map(p=>p.text||'').join(''),
     bodyText,pieces,hasInterjection,
@@ -987,6 +995,16 @@ function syncRows(list=data.utterances){
     }))
   }));
 }
+async function syncPost(payload){
+  let res;
+  try{
+    res=await fetch(bundle.syncEndpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  }catch(e){
+    throw new Error('无法连接同步服务（127.0.0.1:8768）。请先运行 scripts/start_all.sh，并刷新本页。');
+  }
+  const out=await res.json().catch(()=>({ok:false,error:'同步服务返回了无法解析的内容（HTTP '+res.status+'）'}));
+  return {res,out};
+}
 async function syncToLabelStudio(){
   const btn=$('#sync');
   flushPersist();
@@ -995,36 +1013,51 @@ async function syncToLabelStudio(){
   const outside=data.utterances.length-source.length;
   if(!source.length){ alert('三段窗口内没有句子可同步。取消勾选“仅同步三段内”可同步全部。'); return; }
   const rows=syncRows(source);
-  const tagged=rows.filter(r=>(r.tags||[]).length).length;
-  const tagKeys=[...new Set(rows.flatMap(r=>r.tags||[]))];
-  if(!confirm(`将把当前 ${rows.length} 句完整状态覆盖写入 task ${data.taskId}（项目 ${data.projectId}）。${outside?`\n（按“仅同步三段内”设置，不含窗口外 ${outside} 句）`:''}\n其中 ${tagged} 句有标签：${tagKeys.length?tagKeys.join(', '):'无'}\n写回前自动备份数据库。继续？`)) return;
-  btn.disabled=true; const old=btn.textContent; btn.textContent='同步中…';
-  setSyncStatus('正在覆盖写回…');
+  const base={projectId:data.projectId,taskId:data.taskId,utterances:rows,mode:'all'};
+  btn.disabled=true; const old=btn.textContent; btn.textContent='检查中…';
   try{
+    setSyncStatus('正在检查待同步内容…');
+    const pre=await syncPost({...base,dryRun:true,checkExisting:true});
+    if(!pre.res.ok||!pre.out.ok) throw new Error('同步前检查未通过：'+(pre.out.error||('HTTP '+pre.res.status)));
+    const tagged=rows.filter(r=>(r.tags||[]).length).length;
+    const tagKeys=[...new Set(rows.flatMap(r=>r.tags||[]))];
+    const unknown=rows.filter(r=>r.speaker==='UNKNOWN').length;
+    const machine=source.filter(u=>!isConfirmed(u)&&u.speaker!=='UNKNOWN').length;
+    const existing=(pre.out.existing||[]);
+    const lines=[`把当前页面的 ${rows.length} 句作为最终结果写入 task ${data.taskId}（项目 ${data.projectId}）。`];
+    if(outside) lines.push(`（按“仅同步三段内”设置，不含窗口外 ${outside} 句）`);
+    if(machine) lines.push(`其中 ${machine} 句未逐句确认，将按当前机器建议一并写入。`);
+    if(unknown) lines.push(`⚠ 有 ${unknown} 句说话人仍是 UNKNOWN，会按 UNKNOWN 写入。`);
+    lines.push(`标签：${tagged} 句${tagKeys.length?'（'+tagKeys.join(', ')+'）':''}`);
+    existing.forEach(a=>lines.push(`将替换现有 Annotation #${a.id}（${a.items} 个结果${a.mine?'':'，非本账号创建'}）。`));
+    lines.push('写回前自动备份数据库。继续？');
+    if(!confirm(lines.join('\n'))){ setSyncStatus('已取消，未写入任何内容'); return; }
+    btn.textContent='同步中…'; setSyncStatus('正在覆盖写回…');
     let out=null;
-    let replaceAnnotation=true;
     for(let attempt=0;attempt<2;attempt++){
-      const res=await fetch(bundle.syncEndpoint,{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({projectId:data.projectId,taskId:data.taskId,utterances:rows,mode:'all',replaceAnnotation})});
-      out=await res.json();
-      if(res.ok&&out.ok) break;
-      if((res.status===409||res.status===403) && out.code==='annotation_conflict' && attempt===0){
+      const r=await syncPost({...base,replaceAnnotation:true});
+      out=r.out;
+      if(r.res.ok&&out.ok) break;
+      if((r.res.status===409||r.res.status===403) && out.code==='annotation_conflict' && attempt===0){
         if(!confirm(`${out.error}\n\n是否明确允许覆盖这个任务的 Annotation？`)) throw new Error('已取消，未写入任何内容');
         continue;
       }
-      throw new Error(out.error||('HTTP '+res.status));
+      throw new Error(out.error||('HTTP '+r.res.status));
     }
     if(!out||!out.ok) throw new Error(out?.error||'同步失败');
     const ann=out.annotation, pred=out.prediction;
     const bits=[];
     if(ann) bits.push(`Annotation #${ann.id}（${ann.action==='created'?'已创建':'已覆盖'}，${ann.items} 条结果）`);
     if(pred) bits.push(`Prediction #${pred.id}（${pred.items} 条结果）`);
+    snapshot();
+    source.forEach(u=>{ if(!isConfirmed(u)&&u.speaker!=='UNKNOWN') confirmRow(u,'已随同步确认'); });
+    persist(); render(); updateSide();
     setSyncStatus(`已同步：${bits.join('；')}`);
     alert(`同步成功\n${bits.join('\n')}\n共写入 ${rows.length} 句，标签 ${tagged} 句。`);
     btn.textContent='✓ 已同步';
   }catch(e){
-    setSyncStatus('同步失败：'+e.message,true);
-    alert('同步失败：'+e.message);
+    setSyncStatus(e.message,true);
+    alert(e.message);
   }finally{
     btn.disabled=false; setTimeout(()=>{btn.textContent=old;},1200);
   }
