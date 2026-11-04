@@ -5,7 +5,7 @@ Safety:
   * backs up the SQLite DB before every write
   * writes pending/machine rows only as Predictions
   * requires an explicit replaceAnnotation for any existing Annotation
-  * task 5's existing human annotation is read-only unless ALLOW_TASK5_REPLACE=1
+  * tasks listed in LS_READ_ONLY_TASKS need an explicit allowReadOnlyReplace from the UI to be replaced
   * never deletes another user's Annotation
 """
 from __future__ import annotations
@@ -257,7 +257,8 @@ def merge_into_annotation(existing, rows):
         if touched: changed+=1
     return merged, changed, added
 
-def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=False, check_existing=False):
+def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=False, check_existing=False,
+         allow_read_only_replace=False):
     """Write confirmed rows as Annotation, pending rows as Prediction.
 
     Existing Annotations are never PATCHed unless replace_annotation=true. Task 5
@@ -294,10 +295,10 @@ def sync(task_id, rows, mode='confirmed', replace_annotation=False, dry_run=Fals
         mine=[a for a in anns if is_mine(a)]
         # Our "mine" test uses the API's latest completed_by. If the API only
         # exposes a legacy task_completion row, don't assume ownership.
-        if anns and task_id in READ_ONLY_ANNOTATION_TASKS and replace_annotation:
+        if anns and task_id in READ_ONLY_ANNOTATION_TASKS and replace_annotation and not allow_read_only_replace:
             raise PermissionError(
-                f'task {task_id} 已有正式人工标注，同步服务默认只读；'
-                '若确需覆盖，请以 ALLOW_TASK5_REPLACE=1 重启服务并显式确认。')
+                f'task {task_id} 已有受保护的人工标注（{sum(len(a.get("result") or []) for a in anns)} 个结果）。'
+                '继续将用当前页面内容整体替换它；写回前会自动备份数据库。')
         if not mine and tagged and mode!='all':
             # A task with no Annotation yet: tags belong in the Prediction,
             # together with all other unconfirmed rows. Never drop them.
@@ -560,7 +561,8 @@ class Handler(BaseHTTPRequestHandler):
                 task_id, rows, mode,
                 replace_annotation=bool(payload.get('replaceAnnotation')),
                 dry_run=bool(payload.get('dryRun')),
-                check_existing=bool(payload.get('checkExisting')))
+                check_existing=bool(payload.get('checkExisting')),
+                allow_read_only_replace=bool(payload.get('allowReadOnlyReplace')))
             self._send(200, {'ok':True, **data})
         except PermissionError as e:
             self._send(409, {'ok':False,'error':str(e),'code':'annotation_conflict'})

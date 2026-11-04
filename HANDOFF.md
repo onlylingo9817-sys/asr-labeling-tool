@@ -295,7 +295,7 @@ N90 最近重新生成了 ASR：
 - 加载草稿时自动修复“片段超出本句”的旧数据，并在状态栏提示。
 - 同步前先做一次 dry-run 检查（`/sync` 新增 `checkExisting`），不通过则不写入。
 - 报错改为精确信息（第几句、时间、文字片段）；连不上同步服务才提示启动服务，不再对所有失败都说“请确认同步服务已启动”。
-- `.env` 补上 `LS_READ_ONLY_TASKS=5`，同步服务不再默认允许覆盖 task 5 的 Annotation（覆盖需显式确认或 `ALLOW_TASK5_REPLACE=1`）。
+- `.env` 补上 `LS_READ_ONLY_TASKS=5`，同步服务对 task 5 有保护：同步时弹窗警告，用户点“确定”才覆盖（请求带 `allowReadOnlyReplace`），点“取消”不写入。已移除对不存在的 `ALLOW_TASK5_REPLACE` 的提示。
 
 **task 5（N70-5）排查结论**：
 - Annotation id=1 当前有 40 个结果（22 句 SALES_1、18 句 CUSTOMER_1，2.3–124.3 秒），时间与 `work/task5_reference.json` 40 段逐一相同，region id 为 Label Studio 前端风格（非本工具的 `s00000`），`lead_time` 约 3178 秒。

@@ -1033,13 +1033,14 @@ async function syncToLabelStudio(){
     lines.push('写回前自动备份数据库。继续？');
     if(!confirm(lines.join('\n'))){ setSyncStatus('已取消，未写入任何内容'); return; }
     btn.textContent='同步中…'; setSyncStatus('正在覆盖写回…');
-    let out=null;
+    let out=null, allowReadOnlyReplace=false;
     for(let attempt=0;attempt<2;attempt++){
-      const r=await syncPost({...base,replaceAnnotation:true});
+      const r=await syncPost({...base,replaceAnnotation:true,allowReadOnlyReplace});
       out=r.out;
       if(r.res.ok&&out.ok) break;
       if((r.res.status===409||r.res.status===403) && out.code==='annotation_conflict' && attempt===0){
-        if(!confirm(`${out.error}\n\n是否明确允许覆盖这个任务的 Annotation？`)) throw new Error('已取消，未写入任何内容');
+        if(!confirm(`⚠ ${out.error}\n\n点“确定”＝用当前页面覆盖；点“取消”＝保持原标注，不写入任何内容。`)) throw new Error('已取消，未写入任何内容');
+        allowReadOnlyReplace=true;
         continue;
       }
       throw new Error(out.error||('HTTP '+r.res.status));
