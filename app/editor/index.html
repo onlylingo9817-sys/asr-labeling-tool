@@ -422,7 +422,7 @@ function loadRecording(taskId){
     const saved=JSON.parse(localStorage.getItem(editorKey(taskId,rec.projectId))||'null');
     rows=Array.isArray(saved)&&saved.length?saved:window.structuredClone(rec.utterances);
   }catch(e){ rows=window.structuredClone(rec.utterances); }
-  const repairedRows=migrateRows(rows)+sanitizeRows(rows);
+  const repairedRows=sanitizeRows(rows)+migrateRows(rows);
   data={taskId:rec.taskId,projectId:rec.projectId,title:rec.label,audio:rec.audio,duration:rec.duration,
         waveform:rec.waveform||'',windows:rec.windows||[],utterances:rows,source:'Label Studio'};
   localStorage.setItem(`asr-rec-${currentProject()||0}`,String(taskId));
@@ -466,6 +466,7 @@ async function pullFromLabelStudio(){
   finally{ btn.disabled=false; btn.textContent=old; }
 }
 const MIN_SPAN=0.01;
+const MIN_FRAGMENT=0.08;
 function sanitizeRows(rows){
   // Remove pieces with no duration and widen zero-length sentences, so a stale
   // draft can never block a sync. Returns how many rows were touched.
@@ -473,7 +474,13 @@ function sanitizeRows(rows){
   for(const u of rows){
     let touched=false;
     if(Array.isArray(u.pieces)){
-      const kept=u.pieces.filter(p=>Number(p.end)-Number(p.start)>=MIN_SPAN);
+      const kept=u.pieces.filter(p=>{
+        const len=Number(p.end)-Number(p.start);
+        if(len<MIN_SPAN) return false;
+        if(len<MIN_FRAGMENT && !(p.text||'').trim()) return false;
+        if(len<MIN_FRAGMENT && (p.start<u.start-0.02||p.end>u.end+0.02)) return false;
+        return true;
+      });
       if(kept.length!==u.pieces.length){
         touched=true;
         if(kept.length){ u.pieces=kept; }
@@ -481,6 +488,13 @@ function sanitizeRows(rows){
       }
     }
     if(Number(u.end)-Number(u.start)<MIN_SPAN){ u.end=round3(Number(u.start)+MIN_SPAN); touched=true; }
+    if(Array.isArray(u.pieces)&&u.pieces.length){
+      const lo=Math.min(...u.pieces.map(p=>Number(p.start))), hi=Math.max(...u.pieces.map(p=>Number(p.end)));
+      if(lo<u.start-0.02){ u.start=round3(lo); touched=true; }
+      if(hi>u.end+0.02){ u.end=round3(hi); touched=true; }
+      u.hasInterjection=u.pieces.some(p=>p.isInterjection);
+      u.bodyText=u.pieces.filter(p=>!p.isInterjection).map(p=>p.text||'').join('')||u.bodyText||'';
+    }
     if(touched) fixed++;
   }
   return fixed;
@@ -636,8 +650,8 @@ function mergeRows(a,b){
   const {pieces,bodyText,hasInterjection}=composition(a,b);
   return {
     ...a,
-    start:Math.min(a.start,b.start),
-    end:Math.max(a.end,b.end),
+    start:Math.min(a.start,b.start,...pieces.map(p=>p.start)),
+    end:Math.max(a.end,b.end,...pieces.map(p=>p.end)),
     text:pieces.map(p=>p.text||'').join(''),
     bodyText,pieces,hasInterjection,
     speaker:winner.speaker,
@@ -1041,7 +1055,7 @@ async function syncToLabelStudio(){
   try{
     setSyncStatus('正在检查待同步内容…');
     const pre=await syncPost({...base,dryRun:true,checkExisting:true});
-    if(!pre.res.ok||!pre.out.ok) throw new Error('同步前检查未通过：'+(pre.out.error||('HTTP '+pre.res.status)));
+    if(!pre.res.ok||!pre.out.ok) throw new Error('同步前检查未通过：'+(pre.out.error||('HTTP '+pre.res.status))+'\n\n如果找不到该句，点“重置为底稿”可丢弃本地草稿后重新开始。');
     const tagged=rows.filter(r=>(r.tags||[]).length).length;
     const tagKeys=[...new Set(rows.flatMap(r=>r.tags||[]))];
     const unknown=rows.filter(r=>r.speaker==='UNKNOWN').length;

@@ -178,8 +178,8 @@ def _format_range(rows):
             if ps < start-0.020 or pe > end+0.020:
                 snippet=(row.get('bodyText') or row.get('text') or '').strip()[:14]
                 raise ValueError(
-                    f'第 {idx+1} 句（{start}–{end} 秒，“{snippet}”）的插话片段 {ps}–{pe} 秒超出了本句范围。'
-                    '请在页面找到该时间点，拆出或删除该插话后再同步。')
+                    f'同步列表第 {idx+1} 句（{start}–{end} 秒，“{snippet}”）里有个片段 {ps}–{pe} 秒超出了本句范围。'
+                    '正常情况下页面会自动修复；若仍出现，请刷新页面，或点“重置为底稿”。')
             pieces.append({'start':max(start,ps),'end':min(end,pe),
                            'text':(p.get('text') or '').strip(),
                            'speaker':(p.get('speaker') or speaker).strip(),
