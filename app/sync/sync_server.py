@@ -9,7 +9,7 @@ Safety:
   * never deletes another user's Annotation
 """
 from __future__ import annotations
-import json, os, shutil, sqlite3, subprocess, time, urllib.error, urllib.request
+import json, os, shutil, sqlite3, subprocess, threading, time, urllib.error, urllib.request, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -424,7 +424,11 @@ def _region_to_utterances(result):
         out.append(u)
     return out
 
-def pull_project(project_id, force=False, include_empty=True):
+PULL_JOBS={}
+PULL_LOCK=threading.Lock()
+DATA_LOCK=threading.Lock()
+
+def pull_project(project_id, force=False, include_empty=True, progress=None):
     """Pull new tasks from a Label Studio project into editor/data.json.
 
     Existing task ids are skipped unless force=True. Local files are written
@@ -438,10 +442,15 @@ def pull_project(project_id, force=False, include_empty=True):
     recordings=bundle.setdefault('recordings',[])
     existing={(int(r.get('projectId') or 0), int(r['taskId'])) for r in recordings}
     added=[]; skipped=[]; missing=[]
+    def note(**info):
+        if progress: progress(**info)
+    todo=[t for t in tasks if force or (project_id,int(t['id'])) not in existing]
+    note(total=len(todo),done=0,step='准备中',current=None)
     for t in tasks:
         tid=int(t['id'])
         if (project_id,tid) in existing and not force:
             skipped.append(tid); continue
+        note(current=tid,step='复制音频并生成波形')
         audio=str((t.get('data') or {}).get('audio') or '')
         if not audio:
             missing.append({'taskId':tid,'reason':'no audio field'}); continue
@@ -475,6 +484,7 @@ def pull_project(project_id, force=False, include_empty=True):
             duration=probe_duration(dest)
         windows=[]
         if not utterances and build_asr_recording and os.environ.get('AUTO_ASR','1')!='0':
+            note(current=tid,step=f'语音识别中（约 {max(1,round(duration/60*0.05))}–{max(2,round(duration/60*0.15))} 分钟，请耐心等待）')
             try:
                 asr_data=build_asr_recording(dest,tid,duration)
                 utterances=asr_data['utterances']; windows=asr_data['windows']
@@ -490,9 +500,37 @@ def pull_project(project_id, force=False, include_empty=True):
             int(r['taskId'])==tid and int(r.get('projectId') or 0)==project_id and force)]
         recordings.append(rec)
         added.append(tid); existing.add((project_id,tid))
-    data_path.write_text(json.dumps(bundle,ensure_ascii=False,indent=2),encoding='utf-8')
+        with DATA_LOCK:
+            fresh=json.loads(data_path.read_text(encoding='utf-8')) if data_path.exists() else bundle
+            others=[r for r in fresh.get('recordings',[]) if not (int(r['taskId'])==tid and int(r.get('projectId') or 0)==project_id)]
+            fresh['recordings']=others+[rec]
+            tmp=data_path.with_suffix('.json.tmp')
+            tmp.write_text(json.dumps(fresh,ensure_ascii=False,indent=2),encoding='utf-8'); tmp.replace(data_path)
+        note(done=len(added),current=None,step='已保存')
     return {'projectId':project_id,'added':added,'skipped':skipped,'missing':missing,
-            'total':len(recordings)}
+            'total':len(json.loads(data_path.read_text(encoding='utf-8')).get('recordings',[]))}
+
+def start_pull(project_id, force=False, include_empty=True):
+    with PULL_LOCK:
+        running=[j for j in PULL_JOBS.values() if j['state']=='running']
+        if running:
+            return running[0]['id']
+        jid=uuid.uuid4().hex[:8]
+        job={'id':jid,'state':'running','projectId':int(project_id),'total':0,'done':0,'current':None,
+             'step':'准备中','result':None,'error':None,'started':time.time()}
+        PULL_JOBS[jid]=job
+    def progress(**info):
+        job.update(info)
+    def work():
+        try:
+            job['result']=pull_project(project_id,force,include_empty,progress)
+            job['state']='done'
+        except Exception as exc:
+            import traceback; traceback.print_exc()
+            job['error']=str(exc); job['state']='failed'
+        job['ended']=time.time()
+    threading.Thread(target=work,daemon=True).start()
+    return jid
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -503,7 +541,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length',str(len(body)))
         self.send_header('Access-Control-Allow-Origin','*')
         self.send_header('Access-Control-Allow-Headers','Content-Type')
-        self.send_header('Access-Control-Allow-Methods','POST,OPTIONS')
+        self.send_header('Access-Control-Allow-Methods','GET,POST,OPTIONS')
         self.end_headers(); self.wfile.write(body)
     def do_OPTIONS(self):
         self._send(200, {'ok':True})
@@ -513,6 +551,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith('/projects'):
             try: return self._send(200, {'ok':True,'projects':list_projects()})
             except Exception as e: return self._send(500, {'ok':False,'error':str(e)})
+        if self.path.startswith('/pull/'):
+            job=PULL_JOBS.get(self.path.split('/')[2].split('?')[0])
+            if not job: return self._send(404, {'ok':False,'error':'任务不存在（服务可能已重启）'})
+            return self._send(200, {'ok':True, **job, 'elapsed':round(time.time()-job['started'])})
         self._send(404, {'error':'not found'})
     def do_POST(self):
         if not (self.path.startswith('/sync') or self.path.startswith('/pull') or self.path.startswith('/asr')):
@@ -521,7 +563,10 @@ class Handler(BaseHTTPRequestHandler):
             length=int(self.headers.get('Content-Length','0'))
             payload=json.loads(self.rfile.read(length) or b'{}')
             if self.path.startswith('/pull'):
-                return self._send(200, {'ok':True, **pull_project(payload['projectId'], bool(payload.get('force')), bool(payload.get('includeEmpty', True)))} )
+                if payload.get('wait'):
+                    return self._send(200, {'ok':True, **pull_project(payload['projectId'], bool(payload.get('force')), bool(payload.get('includeEmpty', True)))} )
+                jid=start_pull(payload['projectId'], bool(payload.get('force')), bool(payload.get('includeEmpty', True)))
+                return self._send(200, {'ok':True,'job':jid})
             if self.path.startswith('/asr'):
                 project_id=int(payload['projectId']); task_id=int(payload['taskId'])
                 data_path=EDITOR_DATA
