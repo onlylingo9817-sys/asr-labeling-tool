@@ -68,7 +68,12 @@ def write_env(updates: dict) -> None:
     ENV_FILE.write_text('\n'.join(out).rstrip('\n') + '\n', encoding='utf-8')
 
 def env_value(key, default=''):
-    return os.environ.get(key) or read_env().get(key) or default
+    """Read a setting. The .env file wins over the inherited process environment,
+    because the panel edits .env while this process keeps the values it started with."""
+    file_env = read_env()
+    if key in file_env and file_env[key] != '':
+        return file_env[key]
+    return os.environ.get(key) or default
 
 
 # ---------------------------------------------------------------- detection helpers
@@ -93,7 +98,7 @@ def http_ok(url, timeout=2) -> bool:
 
 def python_candidates():
     env = read_env()
-    cands = [env.get('ASR_PYTHON'), os.environ.get('ASR_PYTHON'), env.get('VOICE_PY'),
+    cands = [env.get('ASR_PYTHON') or os.environ.get('ASR_PYTHON'), env.get('VOICE_PY'),
              str(VENV_DIR/'bin'/'python'), str(ROOT/'work'/'asr-venv'/'bin'/'python'),
              str(APP_DIR/'asr-venv'/'bin'/'python')]
     seen, out = set(), []
@@ -413,7 +418,13 @@ def action_download_models():
 
 # ---------------------------------------------------------------- services
 def load_env_for_child():
-    env = os.environ.copy(); env.update(read_env()); return env
+    env = os.environ.copy()
+    file_env = read_env()
+    for key in ENV_KEYS:
+        if key not in file_env:
+            env.pop(key, None)
+    env.update(file_env)
+    return env
 
 def service_command(name):
     spec = SERVICES[name]
