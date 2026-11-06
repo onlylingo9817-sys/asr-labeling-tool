@@ -63,6 +63,7 @@ input[type=range].scrubbing{accent-color:var(--amber)}
 .tagRow{align-items:center}
 .tagLabel{font-size:11px;color:var(--muted)}
 .tagbtn.quick{border-style:dashed}
+.tagbtn.markInt{border-color:#fdba74;color:#9a3412}
 .tagbtn.splitAt{border-color:#b7c8ff;color:#16389c}
 .nested{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
 .candRow{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}
@@ -74,6 +75,8 @@ input[type=range].scrubbing{accent-color:var(--amber)}
 .nestedChip{font-size:11px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:999px;padding:2px 8px;cursor:pointer;font-variant-numeric:tabular-nums}
 .nestedChip:hover{background:#ffedd5}
 .splitPiece{font:inherit;font-size:10px;padding:0 5px;margin-left:4px;border-radius:6px;border:1px solid #fdba74;background:#fff;color:#9a3412;cursor:pointer}
+.unmarkInt{font:inherit;font-size:10px;padding:0 5px;margin-left:4px;border-radius:6px;border:1px solid #d6d3d1;background:#fff;color:#57534e;cursor:pointer}
+.unmarkInt:hover{background:#f5f5f4}
 .splitPiece:hover{background:#ffedd5}
 .speakerWrap{display:flex;flex-direction:column;gap:4px}
 select,.tagbtn{border:1px solid var(--line);border-radius:7px;padding:4px 6px;font:inherit;background:#fff}
@@ -691,6 +694,7 @@ function buildRow(u,i){
           <button class="tagbtn split" data-i="${i}" title="把光标处或选中位置拆成两句（S）。位置按字数比例估算，可能不准">✂ 按光标拆(S)</button>
           <button class="tagbtn splitAt" data-i="${i}" data-splittime="1" title="先播放到想拆的时间点并暂停，再点这里：按播放位置精确拆分（T）">⏱ 按播放位置拆(T)</button>
           <button class="tagbtn merge" data-i="${i}" title="与下一句合并（M）">⤵ 合并(M)</button>
+          <button class="tagbtn markInt" data-i="${i}" title="先在文字里选中要标成插话的字，再点这里（I）。会把选中的字单独成为一个插话片段，可再指定它的说话人">⌗ 选中标为插话(I)</button>
           <span class="tagSep"></span>
           <button class="tagbtn quick ${u.speaker==='CUSTOMER_1'?'on':''}" data-i="${i}" data-quick="customer" title="快捷操作（C）：把说话人设为 CUSTOMER_1，并同时加上 overlap 标签（抢话）。这是两个动作，不是标签本身">→ 顾客1 + 抢话(C)</button>
           <button class="tagbtn quick ${u.speaker==='UNKNOWN'&&isConfirmed(u)?'on':''}" data-i="${i}" data-quick="unknown" title="快捷操作（U）：只把说话人设为 UNKNOWN，不会添加 unclear 标签。要标“听不清”请用右边的 unclear 标签">→ 说话人未知(U)</button>
@@ -855,6 +859,82 @@ function alignBodyPieces(pieces,body){
   let k=0;
   return pieces.map(p=>p.isInterjection?p:{...p,text:texts[k++]});
 }
+function markSelectionAsInterjection(i){
+  const u=data.utterances[i];
+  const ta=document.querySelector(`.txt[data-i="${i}"]`);
+  if(!u||!ta){ return; }
+  const a=ta.selectionStart, b=ta.selectionEnd;
+  if(b<=a){ setSyncStatus('请先在文字里选中要标成插话的字，再点「选中标为插话」',true); return; }
+  const body=u.bodyText||u.text||'';
+  const sel=body.slice(a,b);
+  const core=sel.replace(/[\s，,。.！!？?；;：:、]/g,'');
+  if(!core){ setSyncStatus('选中的内容只有标点或空格，无法标成插话',true); return; }
+  // the text box shows the BODY only; keep each body piece's text consistent with it
+  const pieces=alignBodyPieces(normalizedPieces(u),body).map(p=>({...p}));
+  // locate the body piece(s) the selection falls in (character offsets over body pieces only)
+  let off=0; const hits=[];
+  pieces.forEach((p,idx)=>{
+    if(p.isInterjection) return;
+    const len=(p.text||'').length, lo=off, hi=off+len; off=hi;
+    if(b>lo && a<hi) hits.push({idx,p,lo,hi});
+  });
+  if(!hits.length){ setSyncStatus('没有找到选中文字所在的片段',true); return; }
+  if(hits.length>1){ setSyncStatus('选中的文字跨了多个片段，请分别选中后标记',true); return; }
+  const {idx,p,lo}=hits[0];
+  const text=p.text||'';
+  const ia=Math.max(0,a-lo), ib=Math.min(text.length,b-lo);
+  const left=text.slice(0,ia), mid=text.slice(ia,ib), right=text.slice(ib);
+  const dur=Math.max(0.001,p.end-p.start), n=Math.max(1,text.length);
+  const t1=round3(p.start+dur*ia/n), t2=round3(p.start+dur*ib/n);
+  const isBlank=x=>!x.replace(/[\s，,。.！!？?；;：:、]/g,'');
+  const PUNCT_ONLY=/^[\s，,。.！!？?；;：:、]+$/;
+  // Punctuation must never be lost: a leftover that is only punctuation travels with the
+  // piece it touches (trailing punctuation closes the body before it, or stays with the interjection).
+  let leftText=left, midText=mid, rightText=right, tail='';
+  if(rightText && PUNCT_ONLY.test(rightText)){ tail=rightText; rightText=''; }
+  if(leftText && PUNCT_ONLY.test(leftText)){ midText=leftText+midText; leftText=''; }
+  const parts=[];
+  if(leftText) parts.push({...p,text:leftText,start:p.start,end:Math.max(t1,p.start+MIN_SPAN),isInterjection:false});
+  parts.push({...p,text:midText+tail,start:Math.max(t1,p.start),end:Math.min(Math.max(t2,t1+MIN_SPAN),p.end),isInterjection:true,
+              speaker:p.speaker||u.speaker,speakerSource:'auto',speakerConfidence:'low',reviewed:false});
+  if(rightText) parts.push({...p,text:rightText,start:Math.min(t2,p.end-MIN_SPAN),end:p.end,isInterjection:false});
+  if(!parts.some(x=>!x.isInterjection)){ setSyncStatus('不能把整句都标成插话。请只选中其中一部分文字',true); return; }
+  // keep the sentence's closing mark on the body: if the body now ends without one, give it a comma
+  const lastBody=[...parts].reverse().find(x=>!x.isInterjection);
+  if(lastBody && !/[，,。.！!？?；;：:、]$/.test(lastBody.text||'')) lastBody.text=(lastBody.text||'')+'，';
+  snapshot();
+  pieces.splice(idx,1,...parts);
+  u.pieces=pieces;
+  u.bodyText=pieces.filter(x=>!x.isInterjection).map(x=>x.text||'').join('');
+  u.text=pieces.map(x=>x.text||'').join('');
+  u.hasInterjection=true;
+  u.reviewed=false; if(u.speakerConfidence==='manual') u.speakerConfidence='low';
+  persist(); refreshRow(i);
+  setSyncStatus(`已把「${mid}」标为插话（约 ${fmtMs(Math.max(t1,p.start))}–${fmtMs(t2)}，时间按字数估算，可用「按播放位置拆」或到插话旁调整说话人）。不对可撤销（⌘Z）`);
+}
+function unmarkInterjection(i,pieceIdx){
+  const u=data.utterances[i];
+  const pieces=normalizedPieces(u).map(p=>({...p}));
+  const p=pieces[pieceIdx];
+  if(!p||!p.isInterjection) return;
+  if(pieces.length===1){ setSyncStatus('整句都是插话，没有正文可并入',true); return; }
+  snapshot();
+  p.isInterjection=false;
+  // merge adjacent body pieces so the row stays tidy
+  const out=[];
+  for(const x of pieces){
+    const prev=out[out.length-1];
+    if(prev && !prev.isInterjection && !x.isInterjection){
+      prev.text=(prev.text||'')+(x.text||''); prev.end=Math.max(prev.end,x.end);
+    }else out.push(x);
+  }
+  u.pieces=out;
+  u.bodyText=out.filter(x=>!x.isInterjection).map(x=>x.text||'').join('');
+  u.text=out.map(x=>x.text||'').join('');
+  u.hasInterjection=out.some(x=>x.isInterjection);
+  persist(); refreshRow(i);
+  setSyncStatus('已改回正文');
+}
 function splitAt(i,atTime){
   const u=data.utterances[i];
   const ta=document.querySelector(`.txt[data-i="${i}"]`);
@@ -946,6 +1026,7 @@ function nestedChips(u,i){
         ${speakerOptions(p.speaker||u.speaker).map(s=>`<option value="${s}" ${s===(p.speaker||u.speaker)?'selected':''}>${s}</option>`).join('')}
       </select>
       <button class="splitPiece" data-i="${i}" data-idx="${idx}" title="把这个插入语拆成独立句（使用它自己的毫秒精度起止）">拆出</button>
+      <button class="unmarkInt" data-i="${i}" data-idx="${idx}" title="这其实不是插话：改回正文">改回正文</button>
     </span>`).join('')}</div>`;
 }
 function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -1352,6 +1433,8 @@ $('#list').addEventListener('click',e=>{
   }
   const nudgeBtn=e.target.closest('[data-nudge]');
   if(nudgeBtn){ e.stopPropagation(); nudgeBoundary(+nudgeBtn.dataset.i,+nudgeBtn.dataset.nudge,e.shiftKey); return; }
+  const unmarkBtn=e.target.closest('.unmarkInt');
+  if(unmarkBtn){ e.stopPropagation(); unmarkInterjection(+unmarkBtn.dataset.i,+unmarkBtn.dataset.idx); return; }
   const splitBtn=e.target.closest('.splitPiece');
   if(splitBtn){ e.stopPropagation(); splitPiece(+splitBtn.dataset.i,+splitBtn.dataset.idx); return; }
   const chip=e.target.closest('.nestedChip');
@@ -1361,6 +1444,7 @@ $('#list').addEventListener('click',e=>{
   e.stopPropagation();
   const i=+btn.dataset.i;
   const u=data.utterances[i];
+  if(btn.classList.contains('markInt')){ markSelectionAsInterjection(i); return; }
   if(btn.dataset.splittime){ splitAt(i,audio.currentTime); return; }
   if(btn.classList.contains('split')){ splitAt(i); return; }
   if(btn.classList.contains('merge')){ mergeWithNext(i); return; }
@@ -1400,6 +1484,9 @@ document.addEventListener('keydown',e=>{
   }
   else if((e.key==='s'||e.key==='S') && active>=0){
     e.preventDefault(); splitAt(active);
+  }
+  else if((e.key==='i'||e.key==='I') && active>=0 && !(e.metaKey||e.ctrlKey)){
+    e.preventDefault(); markSelectionAsInterjection(active);
   }
   else if((e.key==='t'||e.key==='T') && active>=0 && !(e.metaKey||e.ctrlKey)){
     e.preventDefault(); splitAt(active,audio.currentTime);
