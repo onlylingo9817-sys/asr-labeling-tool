@@ -186,10 +186,13 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
   <button id="prev">↑ 上一句</button>
   <button id="play">▶ 播放当前句</button>
   <button id="next">↓ 下一句</button>
-  <label class="autoMergeWrap" title="同一说话人、间隔≤1秒，自动合并为一句">
+  <label class="autoMergeWrap" title="同一说话人、间隔不超过右侧设定的秒数，自动合并为一句">
     <input type="checkbox" id="autoMerge" checked> 自动合并
   </label>
-  <button id="mergeNow" title="立即按规则合并当前语音">⇉ 立即合并</button>
+  <label class="autoMergeWrap" title="合并间隔：相邻两句的间隔不超过这个秒数才会合并（0–10 秒）。对「自动合并」和「立即合并」都生效">
+    间隔≤<input type="number" id="mergeGap" min="0" max="10" step="0.1" value="1" style="width:56px;font:inherit;border:1px solid var(--line);border-radius:6px;padding:3px 4px"> 秒
+  </label>
+  <button id="mergeNow" title="立即按规则合并当前语音（同一说话人、间隔不超过设定秒数、无嵌套插话）">⇉ 立即合并</button>
   <button id="undo" title="撤销最近一步编辑（⌘Z）">↶ 撤销一步</button>
   <button id="redo" title="重做最近一次撤销（⇧⌘Z）">↷ 重做一步</button>
   <button id="resetDraft" title="清除当前录音的全部本地改动，回到 ASR 初始底稿">⟲ 重置为底稿</button>
@@ -263,7 +266,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
       <div>句首时间下的 <span class="kbd">◀</span><span class="kbd">▶</span> 微调与上一句的分界（Shift 更细）</div>
       <div><span class="kbd">M</span> 与下一句合并（拆错了就合并后重拆）</div>
       <div><span class="kbd">⌘Z</span> 撤销上一步</div>
-      <div>自动合并：同一说话人且间隔≤1秒</div>
+      <div>自动合并/立即合并：同一说话人且间隔≤「间隔」设置的秒数（默认 1 秒，可在顶部改）</div>
       <div><span class="kbd">C</span> 设为顾客1并加 overlap（抢话）　<span class="kbd">U</span> 仅设说话人为 UNKNOWN（不加标签）</div>
       <div>标签值直接使用 Label Studio 的英文值：overlap / accent / unclear / cut。</div>
       <div>“已有标注”取自本项目已标区间；其余为机器建议，必须听音确认。</div>
@@ -703,7 +706,12 @@ function buildRow(u,i){
 
 // Auto-merge adjacent rows when they share a speaker and the gap is <= 1s.
 // Range is calculated BEFORE mutating the row, so pieces keep their real times.
-const AUTO_MERGE_GAP = 1.0;
+const AUTO_MERGE_GAP_DEFAULT = 1.0;
+function mergeGap(){
+  const el=document.getElementById('mergeGap');
+  const v=el?parseFloat(el.value):NaN;
+  return Number.isFinite(v)?Math.min(10,Math.max(0,v)):AUTO_MERGE_GAP_DEFAULT;
+}
 function charCount(t){return (t||'').replace(/[\s，,。.！!？?；;：:、]/g,'').length;}
 function normalizedPieces(u){
   if(u.pieces && u.pieces.length){
@@ -750,6 +758,7 @@ function autoMergeSameSpeaker(){
   if(!data) return 0;
   if($('#autoMerge') && !$('#autoMerge').checked) return 0;
   const snapshotBefore=JSON.stringify(data.utterances);
+  const maxGap=mergeGap()+1e-6;
   const out=[];
   let mergedCount=0;
   for(const source of data.utterances){
@@ -765,7 +774,7 @@ function autoMergeSameSpeaker(){
     const shortTail=(row.end-row.start<=1.0 && charCount(row.text)<=6);
     if(shortTail){ out.push(row); continue; }
     if(prev.speaker==='UNKNOWN' || row.speaker==='UNKNOWN'){ out.push(row); continue; }
-    if(prev.speaker!==row.speaker || gap>AUTO_MERGE_GAP){ out.push(row); continue; }
+    if(prev.speaker!==row.speaker || gap>maxGap){ out.push(row); continue; }
     out[out.length-1]=mergeRows(prev,row);
     mergedCount++;
   }
@@ -1231,12 +1240,24 @@ $('#redo').addEventListener('click',redo);
 $('#resetDraft').addEventListener('click',resetToBase);
 $('#mergeNow').addEventListener('click',()=>{
   const n=autoMergeSameSpeaker();
-  if(!n) alert('没有符合“同一说话人、间隔≤1秒、无嵌套插话”的相邻句。');
+  const g=mergeGap();
+  if(!n) alert(`没有符合“同一说话人、间隔≤${g} 秒、无嵌套插话”的相邻句。\n（说话人为 UNKNOWN 的句子不会合并；可以调大上面的“间隔”再试。）`);
+  else setSyncStatus(`已合并 ${n} 处（间隔≤${g} 秒）。不满意可以撤销（⌘Z）`);
 });
 const winOnlyBox=$('#winOnly');
 if(winOnlyBox){
   winOnlyBox.checked=localStorage.getItem('asr-winonly')!=='0';
   winOnlyBox.addEventListener('change',()=>localStorage.setItem('asr-winonly',winOnlyBox.checked?'1':'0'));
+}
+const mergeGapBox=$('#mergeGap');
+if(mergeGapBox){
+  const saved=parseFloat(localStorage.getItem('asr-mergegap'));
+  if(Number.isFinite(saved)) mergeGapBox.value=String(Math.min(10,Math.max(0,saved)));
+  mergeGapBox.addEventListener('change',()=>{
+    const v=parseFloat(mergeGapBox.value);
+    const ok=Number.isFinite(v)?Math.min(10,Math.max(0,v)):1;
+    mergeGapBox.value=String(ok); localStorage.setItem('asr-mergegap',String(ok));
+  });
 }
 const autoMergeBox=$('#autoMerge');
 if(autoMergeBox){

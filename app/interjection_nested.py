@@ -17,6 +17,12 @@ from funasr import AutoModel
 
 INTERJ = "嗯啊哦噢喔哎唉诶呀哈呃额"
 PUNCT = "，,。！？!?；;、"
+FINAL_KEEP = {"。": "。", "？": "？", "?": "？", "！": "！", "!": "！"}
+
+def final_punct(text):
+    """Sentence-final punctuation produced by the punctuation model; commas stay commas."""
+    tail = (text or "").rstrip()[-1:]
+    return FINAL_KEEP.get(tail, "，")
 
 def run(cmd):
     return subprocess.run(cmd, check=True, text=True, capture_output=True)
@@ -71,6 +77,7 @@ def pieces_for(sentence):
         return [{"text": text, "start": sentence["start"], "end": sentence["end"],
                  "isInterjection": False}]
     n = len(aligned)
+    closing = final_punct(text)
     is_int = [False]*n
     i = 0
     while i < n:
@@ -109,7 +116,7 @@ def pieces_for(sentence):
         if not body:
             continue
         pieces.append({
-            "text": body + "，",
+            "text": body + (closing if b == n else "，"),
             "start": round(chars[0][1], 3),
             "end": round(chars[-1][2], 3),
             "isInterjection": all(c in INTERJ for c,_,_ in chars),
