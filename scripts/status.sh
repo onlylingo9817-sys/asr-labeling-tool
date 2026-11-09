@@ -16,5 +16,6 @@ check() {
 }
 check editor 8765 1
 check setup 8766 1
+check asrclip 8770 1
 check sync 8768 "${ENABLE_SYNC:-0}"
 check voiceprint 8769 "${ENABLE_VOICEPRINT:-0}"

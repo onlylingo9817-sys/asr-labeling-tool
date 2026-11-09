@@ -54,6 +54,13 @@ if [[ "${ENABLE_SYNC:-0}" == "1" ]]; then
 else
   echo "[skip] sync (set ENABLE_SYNC=1 in .env to write back to Label Studio)"
 fi
+ASR_PY="${ASR_PYTHON:-${VOICE_PY:-}}"
+if [[ -z "$ASR_PY" && -x "$ROOT/.venv/bin/python" ]]; then ASR_PY="$ROOT/.venv/bin/python"; fi
+if [[ -n "$ASR_PY" && -x "$ASR_PY" ]] && "$ASR_PY" -c "import funasr" >/dev/null 2>&1; then
+  start_one asrclip 8770 "$ROOT/app" "$ASR_PY" asr_clip_server.py
+else
+  echo "[skip] asrclip (single-sentence re-recognition needs the ASR environment; use the settings panel to install it)"
+fi
 if [[ "${ENABLE_VOICEPRINT:-0}" == "1" ]]; then
   VOICE_PY="${VOICE_PY:-${ASR_PYTHON:-}}"
   if [[ -z "$VOICE_PY" && -x "$ROOT/.venv/bin/python" ]]; then VOICE_PY="$ROOT/.venv/bin/python"; fi

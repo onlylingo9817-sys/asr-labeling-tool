@@ -27,9 +27,10 @@ SERVICES = {
     'editor':     {'port': 8765, 'script': 'serve_editor.py',      'label': '编辑器',       'always': True},
     'sync':       {'port': 8768, 'script': 'sync_server.py',       'label': 'Label Studio 同步', 'flag': 'ENABLE_SYNC'},
     'voiceprint': {'port': 8769, 'script': 'voiceprint_server.py', 'label': '声纹分组',      'flag': 'ENABLE_VOICEPRINT'},
+    'asrclip':    {'port': 8770, 'script': 'asr_clip_server.py',   'label': '单句重识别',    'flag': 'ENABLE_ASRCLIP', 'default_on': True},
 }
 SECRET_KEYS = {'LS_TOKEN'}
-ENV_KEYS = ['VOICE_MODEL', 'ENABLE_SYNC', 'ENABLE_VOICEPRINT', 'LABEL_STUDIO_URL', 'LS_BIN', 'LS_DB', 'LS_MEDIA_ROOT',
+ENV_KEYS = ['ENABLE_ASRCLIP', 'VOICE_MODEL', 'ENABLE_SYNC', 'ENABLE_VOICEPRINT', 'LABEL_STUDIO_URL', 'LS_BIN', 'LS_DB', 'LS_MEDIA_ROOT',
             'LS_READ_ONLY_TASKS', 'AUTO_ASR', 'ASR_PYTHON', 'VOICE_PY']
 LOCK = threading.RLock()
 JOBS: dict[str, dict] = {}
@@ -270,8 +271,8 @@ def status() -> dict:
     services = []
     for name, spec in SERVICES.items():
         st = service_running(name)
-        enabled = spec.get('always') or env.get(spec.get('flag', ''), '0') == '1'
-        if name == 'voiceprint':
+        enabled = spec.get('always') or env.get(spec.get('flag', ''), '1' if spec.get('default_on') else '0') == '1'
+        if name in ('voiceprint', 'asrclip'):
             blocked = '' if asr_ready else '需先安装 ASR / 声纹运行环境'
         else:
             blocked = ''
@@ -433,6 +434,10 @@ def service_command(name):
         return [sys.executable, str(EDITOR_DIR/'serve_editor.py'), '--port', str(spec['port'])], EDITOR_DIR
     if name == 'sync':
         return [sys.executable, str(APP_DIR/'sync_server.py' if (APP_DIR/'sync_server.py').exists() else APP_DIR/'sync'/'sync_server.py')], (APP_DIR if (APP_DIR/'sync_server.py').exists() else APP_DIR/'sync')
+    if name == 'asrclip':
+        best = best_python()
+        py = env.get('ASR_PYTHON') or env.get('VOICE_PY') or (best[1] if best else sys.executable)
+        return [py, str(APP_DIR/'asr_clip_server.py')], APP_DIR
     best = best_python()
     py = env.get('VOICE_PY') or (best[1] if best else sys.executable)
     vp = APP_DIR/'voiceprint_server.py' if (APP_DIR/'voiceprint_server.py').exists() else APP_DIR/'voiceprint'/'voiceprint_server.py'
@@ -445,7 +450,7 @@ def start_service(name):
         return {'ok': True, 'message': f"{spec['label']} 已在运行"}
     if st['port_open']:
         raise RuntimeError(f"端口 {spec['port']} 被其他程序占用，请先关闭它")
-    if name == 'voiceprint':
+    if name in ('voiceprint', 'asrclip'):
         b = best_python()
         if not (b and all(b[2]['mods'].get(m) for m in ('funasr', 'torch', 'soundfile', 'scipy'))):
             raise RuntimeError('声纹分组需要先安装 ASR / 声纹运行环境')

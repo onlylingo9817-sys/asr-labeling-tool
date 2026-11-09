@@ -22,6 +22,11 @@ button.ghost{background:transparent}
 .chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 11px;font-size:12px;color:var(--muted);cursor:pointer}
 .chip.on{background:#eef4ff;border-color:#b7c8ff;color:#16389c}
 .player{padding:14px;margin-bottom:14px}
+.mergeOpts{position:relative;font-size:12px;color:var(--muted)}
+.mergeOpts summary{cursor:pointer;list-style:none;border:1px solid var(--line);border-radius:8px;padding:7px 10px;background:#fff;white-space:nowrap}
+.mergeOpts summary::-webkit-details-marker{display:none}
+.mergeOptsBody{position:absolute;z-index:40;top:36px;left:0;width:330px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.15);padding:10px 12px;display:flex;flex-direction:column;gap:5px}
+.mergeOptsBody label{display:flex;align-items:center;gap:6px;color:var(--text)}
 .autoMergeWrap{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap}
 .autoMergeWrap input{accent-color:var(--blue)}
 .recWrap{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -59,11 +64,13 @@ input[type=range].scrubbing{accent-color:var(--amber)}
 .nudge{display:flex;gap:3px;margin:2px 0;align-items:center}
 .nudgeLab{font-size:10px;color:#94a3b8;width:12px}
 .nudge button{font-size:10px;line-height:1;padding:2px 5px;border-radius:5px;color:var(--muted)}
+.nudge button.holding{background:#e8efff;border-color:#93b4ff;color:#16389c}
 .nudge button:hover{color:var(--blue);border-color:#93b4ff}
 .tagSep{width:1px;background:var(--line);margin:0 2px}
 .tagRow{align-items:center}
 .tagLabel{font-size:11px;color:var(--muted)}
 .tagbtn.quick{border-style:dashed}
+.tagbtn.reAsr{border-color:#bfdbfe;color:#1d4ed8}
 .tagbtn.delRow{border-color:#fecaca;color:#b91c1c}
 .tagbtn.delRow:hover{background:#fef2f2}
 .tagbtn.markInt{border-color:#fdba74;color:#9a3412}
@@ -152,6 +159,12 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
 .setupBanner.warn{background:#fff8e8;border:1px solid #f0d69b;color:#6b4a12}
 .setupBanner.ok{background:#e9f8ed;border:1px solid #b6e3c2;color:#12612c}
 .setupBanner.bad{background:#fdecec;border:1px solid #f5b5b5;color:#8a1c1c}
+.reasrBox{border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:8px 0}
+.reasrBox.new{border-color:#bfdbfe;background:#f5f9ff}
+.reasrLab{font-size:11px;color:var(--muted);margin-bottom:2px}
+.reasrTxt{font-size:15px;line-height:1.6;white-space:pre-wrap}
+.reasrTxt .diffDel{background:#fee2e2;text-decoration:line-through}
+.reasrTxt .diffAdd{background:#dcfce7}
 .modelCard{border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin:6px 0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
 .modelCard.cur{border-color:#b7c8ff;background:#f5f8ff}
 .modelCard .t{font-weight:600}
@@ -201,7 +214,16 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
   <label class="autoMergeWrap" title="合并间隔：相邻两句的间隔不超过这个秒数才会合并（0–10 秒）。对「自动合并」和「立即合并」都生效">
     间隔≤<input type="number" id="mergeGap" min="0" max="10" step="0.1" value="1" style="width:56px;font:inherit;border:1px solid var(--line);border-radius:6px;padding:3px 4px"> 秒
   </label>
-  <button id="mergeNow" title="立即按规则合并当前语音（同一说话人、间隔不超过设定秒数、无嵌套插话）">⇉ 立即合并</button>
+  <button id="mergeNow" title="按右侧「合并条件」立即合并当前语音；合并后会列出每一类被跳过的句子数量">⇉ 立即合并</button>
+  <details class="mergeOpts" id="mergeOpts"><summary title="合并条件">⚙ 合并条件</summary>
+    <div class="mergeOptsBody">
+      <div class="sub" style="margin-bottom:4px">间隔 = 上一句的<b>结束时间</b>到下一句的<b>开始时间</b>。只有间隔不超过「间隔≤N 秒」才会合并。</div>
+      <label><input type="checkbox" id="mgSameSpk" checked> 要求说话人相同</label>
+      <label><input type="checkbox" id="mgUnknown"> 允许合并说话人为 UNKNOWN 的句子</label>
+      <label><input type="checkbox" id="mgInterj"> 允许合并含嵌套插话的句子</label>
+      <label><input type="checkbox" id="mgShort"> 允许合并很短的句子（≤1 秒且 ≤6 字）</label>
+      <div class="sub" style="margin-top:4px">默认只合并「说话人相同、已标好、不含插话、不是很短的句子」。要对未标说话人的录音合并，请勾选「允许合并 UNKNOWN」。</div>
+    </div></details>
   <button id="undo" title="撤销最近一步编辑（⌘Z）">↶ 撤销一步</button>
   <button id="redo" title="重做最近一次撤销（⇧⌘Z）">↷ 重做一步</button>
   <button id="resetDraft" title="清除当前录音的全部本地改动，回到 ASR 初始底稿">⟲ 重置为底稿</button>
@@ -272,8 +294,8 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
       <div><span class="kbd">Enter</span> 标记已确认并下一句</div>
       <div><span class="kbd">S</span> 在光标处拆成两句（按字数估算，可能不准）</div>
       <div><span class="kbd">T</span> 按<b>播放位置</b>精确拆分：先播放/暂停到要拆的时间点再按 T</div>
-      <div>时间下的「始」「终」<span class="kbd">◀</span><span class="kbd">▶</span> 分别微调本句的开始/结束（Shift 更细）；邻句是否联动看顶部「联动邻句」</div>
-      <div>「🗑 删除」删掉一句（需确认，可撤销）</div>
+      <div>时间下的「始」「终」<span class="kbd">◀</span><span class="kbd">▶</span> 分别微调本句的开始/结束：点一下 ±0.1 秒，<b>长按会越来越快</b>（Shift 为精细 0.02 秒）；一次长按只算一次撤销；邻句是否联动看顶部「联动邻句」</div>
+      <div>「🗑 删除」删掉一句（需确认，可撤销）；「↻ 重识别」只重做这一句的识别，先对比再决定是否采用</div>
       <div><span class="kbd">M</span> 与下一句合并（拆错了就合并后重拆）</div>
       <div><span class="kbd">⌘Z</span> 撤销上一步</div>
       <div>自动合并/立即合并：同一说话人且间隔≤「间隔」设置的秒数（默认 1 秒，可在顶部改）</div>
@@ -283,6 +305,21 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
       <div>同步会按页面当前完整状态覆盖更新；标签也会一起写回。</div>
     </div>
   </aside>
+</div>
+
+<div class="modalMask" id="reasrModal" hidden>
+  <div class="modal" style="width:min(720px,94vw)">
+    <div class="modalHead"><b>单句重识别</b><span class="sub" id="reasrSub"></span><button class="ghost" id="reasrClose" style="margin-left:auto">关闭</button></div>
+    <div class="modalBody">
+      <div id="reasrState" class="sub"></div>
+      <div id="reasrCmp" hidden>
+        <div class="reasrBox"><div class="reasrLab">当前文字</div><div id="reasrOld" class="reasrTxt"></div></div>
+        <div class="reasrBox new"><div class="reasrLab">重识别结果</div><div id="reasrNew" class="reasrTxt"></div></div>
+        <div class="sub" style="margin:8px 0">只替换文字，不改这一句的说话人、标签和起止时间。结果不一定更好，请听一下再决定。</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button id="reasrPlay">▶ 播放这一句</button><button id="reasrUse" class="primary">采用重识别结果</button><button id="reasrKeep">保留当前文字</button></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="modalMask" id="setupModal" hidden>
@@ -685,7 +722,7 @@ function buildRow(u,i){
     row.dataset.i=i;
     const confClass=u.speakerSource==='existing'||u.speakerSource==='reference'?'reference':u.speakerConfidence==='manual'?'':'auto';
     row.innerHTML=`
-      <div class="idx" title="起止时间（毫秒）">${fmtMs(u.start)}<div class="nudge" title="只调整这一句的【开始】时间（±0.1 秒；按住 Shift ±0.02 秒）。是否带动上一句的结束，由顶部「联动邻句」决定"><span class="nudgeLab">始</span><button data-nudge="-1" data-edge="start" data-i="${i}">◀</button><button data-nudge="1" data-edge="start" data-i="${i}">▶</button></div><span class="endTime">→ ${fmtMs(u.end)}</span><div class="nudge" title="只调整这一句的【结束】时间（±0.1 秒；按住 Shift ±0.02 秒）。是否带动下一句的开始，由顶部「联动邻句」决定"><span class="nudgeLab">终</span><button data-nudge="-1" data-edge="end" data-i="${i}">◀</button><button data-nudge="1" data-edge="end" data-i="${i}">▶</button></div></div>
+      <div class="idx" title="起止时间（毫秒）">${fmtMs(u.start)}<div class="nudge" title="只调整这一句的【开始】时间（点一下 ±0.1 秒；长按会越来越快；按住 Shift 为精细 ±0.02 秒）。是否带动上一句的结束，由顶部「联动邻句」决定"><span class="nudgeLab">始</span><button data-nudge="-1" data-edge="start" data-i="${i}">◀</button><button data-nudge="1" data-edge="start" data-i="${i}">▶</button></div><span class="endTime">→ ${fmtMs(u.end)}</span><div class="nudge" title="只调整这一句的【结束】时间（点一下 ±0.1 秒；长按会越来越快；按住 Shift 为精细 ±0.02 秒）。是否带动下一句的开始，由顶部「联动邻句」决定"><span class="nudgeLab">终</span><button data-nudge="-1" data-edge="end" data-i="${i}">◀</button><button data-nudge="1" data-edge="end" data-i="${i}">▶</button></div></div>
       <div class="speakerWrap">
         <select class="sp ${u.speaker.startsWith('SALES')?'sales':u.speaker.startsWith('CUSTOMER')?'customer':''}" data-i="${i}">
           ${speakerOptions(u.speaker).map(s=>`<option value="${s}" ${s===u.speaker?'selected':''}>${s}</option>`).join('')}
@@ -701,6 +738,7 @@ function buildRow(u,i){
           <button class="tagbtn split" data-i="${i}" title="把光标处或选中位置拆成两句（S）。位置按字数比例估算，可能不准">✂ 按光标拆(S)</button>
           <button class="tagbtn splitAt" data-i="${i}" data-splittime="1" title="先播放到想拆的时间点并暂停，再点这里：按播放位置精确拆分（T）">⏱ 按播放位置拆(T)</button>
           <button class="tagbtn merge" data-i="${i}" title="与下一句合并（M）">⤵ 合并(M)</button>
+          <button class="tagbtn reAsr" data-i="${i}" title="只对这一句重新做语音识别（用这一句的起止时间切出音频）。会先显示新旧文字对比，你确认后才替换；不改说话人、标签和时间">↻ 重识别</button>
           <button class="tagbtn delRow" data-i="${i}" title="删除这一句（需要确认，可撤销 ⌘Z）。同步到 Label Studio 时，被删除的句子不会写入">🗑 删除</button>
           <button class="tagbtn markInt" data-i="${i}" title="先在文字里选中要标成插话的字，再点这里（I）。会把选中的字单独成为一个插话片段，可再指定它的说话人">⌗ 选中标为插话(I)</button>
           <span class="tagSep"></span>
@@ -766,38 +804,56 @@ function mergeRows(a,b){
     tags:[...new Set([...(a.tags||[]),...(b.tags||[])])],
   };
 }
-function autoMergeSameSpeaker(){
-  if(!data) return 0;
-  if($('#autoMerge') && !$('#autoMerge').checked) return 0;
-  const snapshotBefore=JSON.stringify(data.utterances);
-  const maxGap=mergeGap()+1e-6;
-  const out=[];
-  let mergedCount=0;
-  for(const source of data.utterances){
+function mergeOptions(){
+  const g=id=>{const el=document.getElementById(id); return !!(el&&el.checked);};
+  return {sameSpk:g('mgSameSpk'), allowUnknown:g('mgUnknown'), allowInterj:g('mgInterj'), allowShort:g('mgShort')};
+}
+// Why two adjacent rows are NOT merged ('' = they can merge)
+function mergeBlocker(prev,row,opt,maxGap){
+  const gap=row.start-prev.end;
+  if(gap>maxGap) return 'gap';
+  if(!opt.allowInterj && (prev.hasInterjection||row.hasInterjection||prev.isInterjection||row.isInterjection)) return 'interj';
+  if(!opt.allowShort && (row.end-row.start<=1.0 && charCount(row.text)<=6)) return 'short';
+  if(!opt.allowUnknown && (prev.speaker==='UNKNOWN'||row.speaker==='UNKNOWN')) return 'unknown';
+  if(opt.sameSpk && prev.speaker!==row.speaker) return 'speaker';
+  return '';
+}
+const MERGE_REASON={gap:'间隔超过设定',interj:'含嵌套插话',short:'很短的句子',unknown:'说话人是 UNKNOWN',speaker:'说话人不同'};
+function mergePass(rows,opt,maxGap,dryRun){
+  const out=[]; const skipped={gap:0,interj:0,short:0,unknown:0,speaker:0}; let merged=0;
+  for(const source of rows){
     const row={...source,tags:[...(source.tags||[])],pieces:normalizedPieces(source)};
     row.bodyText=row.pieces.filter(p=>!p.isInterjection).map(p=>p.text||'').join('')||row.bodyText||'';
     row.hasInterjection=row.pieces.some(p=>p.isInterjection);
     const prev=out[out.length-1];
     if(!prev){ out.push(row); continue; }
-    const gap=row.start-prev.end;
-    // A nested interjection is a different person saying something in the
-    // middle: never absorb it into a neighbour, and never merge across it.
-    if(prev.hasInterjection || row.hasInterjection || prev.isInterjection || row.isInterjection){ out.push(row); continue; }
-    const shortTail=(row.end-row.start<=1.0 && charCount(row.text)<=6);
-    if(shortTail){ out.push(row); continue; }
-    if(prev.speaker==='UNKNOWN' || row.speaker==='UNKNOWN'){ out.push(row); continue; }
-    if(prev.speaker!==row.speaker || gap>maxGap){ out.push(row); continue; }
-    out[out.length-1]=mergeRows(prev,row);
-    mergedCount++;
+    const why=mergeBlocker(prev,row,opt,maxGap);
+    if(why){ skipped[why]++; out.push(row); continue; }
+    merged++;
+    if(!dryRun) out[out.length-1]=mergeRows(prev,row);
+    else out.push(row);
   }
-  if(mergedCount){
+  return {out,merged,skipped};
+}
+function mergeReport(skipped,gap){
+  const parts=Object.entries(skipped).filter(([,n])=>n>0).map(([k,n])=>`${MERGE_REASON[k]}：${n} 处`);
+  return parts.length?`未合并的原因（间隔≤${gap} 秒以内的相邻句）\n  ${parts.join('\n  ')}`:'';
+}
+// force=true when the user clicks 「立即合并」: the 自动合并 checkbox only governs automatic merging.
+function autoMergeSameSpeaker(force){
+  if(!data) return {merged:0,skipped:{}};
+  if(!force && $('#autoMerge') && !$('#autoMerge').checked) return {merged:0,skipped:{}};
+  const snapshotBefore=JSON.stringify(data.utterances);
+  const maxGap=mergeGap()+1e-6;
+  const r=mergePass(data.utterances,mergeOptions(),maxGap,false);
+  if(r.merged){
     undoStack.push(snapshotBefore);
     if(undoStack.length>50) undoStack.shift();
     redoStack.length=0;
-    data.utterances=out;
+    data.utterances=r.out;
     persist(); render(); updateSide();
   }
-  return mergedCount;
+  return r;
 }
 function splitPiece(i, pieceIdx){
   const u=data.utterances[i];
@@ -831,42 +887,167 @@ function splitPiece(i, pieceIdx){
   persist(); render(); seekTo(i);
 }
 function linkEdges(){ const el=document.getElementById('linkEdges'); return !!(el&&el.checked); }
-function nudgeBoundary(i,dir,fine,edge){
+function nudgeBoundary(i,dir,fine,edge,opt){
+  opt=opt||{};
   edge=edge||'start';
   const cur=data.utterances[i]; if(!cur) return;
   const prev=data.utterances[i-1], next=data.utterances[i+1];
-  const step=(fine?0.02:0.1)*dir, MIN=0.05;
+  const step=(opt.step!=null?opt.step:(fine?0.02:0.1))*dir, MIN=0.05;
   const link=linkEdges();
   const fit=(row)=>{ (row.pieces||[]).forEach(p=>{ if(p.start<row.start) p.start=row.start; if(p.end>row.end) p.end=row.end; }); row.pieces=(row.pieces||[]).filter(p=>p.end-p.start>=MIN_SPAN); };
   let t;
   if(edge==='start'){
     t=round3(cur.start+step);
-    if(t<0||t>cur.end-MIN){ setSyncStatus('已到极限：开始时间不能晚于结束时间',true); return; }
+    if(t<0||t>cur.end-MIN){ setSyncStatus('已到极限：开始时间不能晚于结束时间',true); return null; }
     const touching=prev && Math.abs(prev.end-cur.start)<=0.15;
-    if(link && touching && (t<prev.start+MIN)){ setSyncStatus('联动时，上一句不能再缩短了。可以先关闭「联动邻句」',true); return; }
-    snapshot();
+    if(link && touching && (t<prev.start+MIN)){ setSyncStatus('联动时，上一句不能再缩短了。可以先关闭「联动邻句」',true); return null; }
+    if(!opt.noSnapshot) snapshot();
     cur.start=t;
     let msg=`开始时间 → ${fmtMs(t)}`;
     if(link && touching){ prev.end=t; fit(prev); msg+='（上一句的结束已联动）'; }
     else if(prev && prev.end>t+0.001){ msg+=`（注意：与上一句重叠了 ${(prev.end-t).toFixed(2)} 秒）`; }
-    fit(cur); persist(); refreshRow(i); if(prev) refreshRow(i-1);
+    fit(cur);
+    if(opt.quiet){ updateTimeCells(i); if(prev) updateTimeCells(i-1); setSyncStatus(msg); return t; }
+    persist(); refreshRow(i); if(prev) refreshRow(i-1);
     audio.currentTime=Math.max(0,t-0.3);
     setSyncStatus(msg+' · 已跳到前 0.3 秒，可播放试听');
+    return t;
   }else{
     t=round3(cur.end+step);
-    if(t<cur.start+MIN){ setSyncStatus('已到极限：结束时间不能早于开始时间',true); return; }
-    if(t>(data.duration||1e9)){ setSyncStatus('已到录音末尾',true); return; }
+    if(t<cur.start+MIN){ setSyncStatus('已到极限：结束时间不能早于开始时间',true); return null; }
+    if(t>(data.duration||1e9)){ setSyncStatus('已到录音末尾',true); return null; }
     const touching=next && Math.abs(next.start-cur.end)<=0.15;
-    if(link && touching && (t>next.end-MIN)){ setSyncStatus('联动时，下一句不能再缩短了。可以先关闭「联动邻句」',true); return; }
-    snapshot();
+    if(link && touching && (t>next.end-MIN)){ setSyncStatus('联动时，下一句不能再缩短了。可以先关闭「联动邻句」',true); return null; }
+    if(!opt.noSnapshot) snapshot();
     cur.end=t;
     let msg=`结束时间 → ${fmtMs(t)}`;
     if(link && touching){ next.start=t; fit(next); msg+='（下一句的开始已联动）'; }
     else if(next && next.start<t-0.001){ msg+=`（注意：与下一句重叠了 ${(t-next.start).toFixed(2)} 秒）`; }
-    fit(cur); persist(); refreshRow(i); if(next) refreshRow(i+1);
+    fit(cur);
+    if(opt.quiet){ updateTimeCells(i); if(next) updateTimeCells(i+1); setSyncStatus(msg); return t; }
+    persist(); refreshRow(i); if(next) refreshRow(i+1);
     audio.currentTime=Math.max(0,t-0.8);
     setSyncStatus(msg+' · 已跳到结束前 0.8 秒，可播放试听');
+    return t;
   }
+}
+const ASRCLIP='http://127.0.0.1:8770';
+let reasrCtx=null;
+function charDiffHtml(a,b){
+  // simple LCS char diff on body text (punctuation included) -> html for old and new
+  const A=[...a], B=[...b], n=A.length, m=B.length;
+  const L=Array.from({length:n+1},()=>new Int32Array(m+1));
+  for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--) L[i][j]=A[i]===B[j]?L[i+1][j+1]+1:Math.max(L[i+1][j],L[i][j+1]);
+  let i=0,j=0,oh='',nh='';
+  const esc=t=>escapeHtml(t);
+  while(i<n&&j<m){
+    if(A[i]===B[j]){ oh+=esc(A[i]); nh+=esc(B[j]); i++; j++; }
+    else if(L[i+1][j]>=L[i][j+1]){ oh+=`<span class="diffDel">${esc(A[i])}</span>`; i++; }
+    else { nh+=`<span class="diffAdd">${esc(B[j])}</span>`; j++; }
+  }
+  while(i<n){ oh+=`<span class="diffDel">${esc(A[i])}</span>`; i++; }
+  while(j<m){ nh+=`<span class="diffAdd">${esc(B[j])}</span>`; j++; }
+  return [oh,nh];
+}
+async function reRecognize(i){
+  const u=data.utterances[i]; if(!u) return;
+  if(u.end-u.start>60){ alert('这一句超过 60 秒，请先拆分再重识别。'); return; }
+  reasrCtx={i,id:u.id,start:u.start,end:u.end,result:null};
+  $('#reasrModal').hidden=false; $('#reasrCmp').hidden=true;
+  $('#reasrSub').textContent=`${fmtMs(u.start)} → ${fmtMs(u.end)}`;
+  $('#reasrState').textContent='正在识别这一句…（首次使用要加载模型，可能需要十几秒）';
+  try{
+    let res;
+    try{ res=await fetch(ASRCLIP+'/recognize',{method:'POST',headers:{'Content-Type':'application/json'},
+         body:JSON.stringify({taskId:data.taskId,projectId:data.projectId,start:u.start,end:u.end})}); }
+    catch(e){ throw new Error('单句重识别服务（8770）没有运行。请打开「⚙ 环境与服务」启用「单句重识别」，或运行 scripts/start_all.sh。'); }
+    const out=await res.json();
+    if(!res.ok||!out.ok) throw new Error(out.error||('HTTP '+res.status));
+    if(out.empty||!out.bodyText){ $('#reasrState').textContent='这一段没有识别出文字（可能是静音、噪声或太短）。当前文字没有改动。'; return; }
+    reasrCtx.result=out;
+    const oldBody=u.bodyText||u.text||'';
+    const [oh,nh]=charDiffHtml(oldBody,out.bodyText);
+    $('#reasrOld').innerHTML=oh; $('#reasrNew').innerHTML=nh;
+    const sameText=oldBody.replace(/[，。？！、,.?!\s]/g,'')===out.bodyText.replace(/[，。？！、,.?!\s]/g,'');
+    $('#reasrState').textContent=(sameText?'文字没有变化（只可能是标点不同）。':'已识别完成，用时 '+out.seconds+' 秒。')+(normalizedPieces(u).some(p=>p.isInterjection)?' 注意：这一句含嵌套插话，采用后会按新识别结果重新拆分插话片段（说话人需要重新指定）。':'');
+    $('#reasrCmp').hidden=false;
+  }catch(e){ $('#reasrState').textContent='失败：'+e.message; }
+}
+function applyReRecognize(){
+  if(!reasrCtx||!reasrCtx.result) return;
+  const i=data.utterances.findIndex(x=>x.id===reasrCtx.id);
+  if(i<0){ $('#reasrState').textContent='这一句已经不存在了（可能被删除或合并），没有替换。'; return; }
+  const u=data.utterances[i], r=reasrCtx.result;
+  if(Math.abs(u.start-reasrCtx.start)>0.001||Math.abs(u.end-reasrCtx.end)>0.001){
+    if(!confirm('这一句的起止时间在识别后被改动过，识别结果对应的是旧的时间范围。仍要采用吗？')) return;
+  }
+  snapshot();
+  const oldPieces=normalizedPieces(u);
+  const hadInterj=oldPieces.some(p=>p.isInterjection);
+  const keep={speaker:u.speaker,speakerSource:u.speakerSource,speakerConfidence:u.speakerConfidence};
+  let pieces=r.pieces.map(p=>({text:p.text,start:Math.max(u.start,p.start),end:Math.min(u.end,p.end),isInterjection:!!p.isInterjection,
+    speaker:keep.speaker,speakerSource:keep.speakerSource,speakerConfidence:keep.speakerConfidence,reviewed:isConfirmed(u)}));
+  pieces=pieces.filter(p=>p.end-p.start>=MIN_SPAN);
+  if(!pieces.some(p=>!p.isInterjection)){ pieces=[{text:r.bodyText||r.text,start:u.start,end:u.end,isInterjection:false,...keep,reviewed:isConfirmed(u)}]; }
+  u.pieces=pieces;
+  u.bodyText=pieces.filter(p=>!p.isInterjection).map(p=>p.text).join('');
+  u.text=pieces.map(p=>p.text).join('');
+  u.hasInterjection=pieces.some(p=>p.isInterjection);
+  persist(); refreshRow(i);
+  $('#reasrModal').hidden=true;
+  setSyncStatus(`已用重识别结果替换文字（${fmtMs(u.start)}）${hadInterj?'；插话片段已按新结果重新拆分，请重新指定说话人':''}。不对可撤销（⌘Z）`);
+  reasrCtx=null;
+}
+function updateTimeCells(i){
+  const u=data.utterances[i]; const row=document.querySelector(`#list .row[data-i="${i}"]`);
+  if(!u||!row) return;
+  const idx=row.querySelector('.idx'); if(!idx) return;
+  const first=idx.firstChild; if(first&&first.nodeType===3) first.nodeValue=fmtMs(u.start);
+  const end=idx.querySelector('.endTime'); if(end) end.textContent='→ '+fmtMs(u.end);
+}
+// Press-and-hold: first click = one 0.1s step; keep holding and it repeats, accelerating.
+// A whole hold is ONE undo step, and the playhead jumps once at the end.
+const HOLD_DELAY=380;
+const HOLD_STAGES=[ {after:0,every:140,step:0.1}, {after:1200,every:90,step:0.2}, {after:2600,every:70,step:0.25}, {after:4200,every:60,step:0.4} ];
+let holdState=null;
+function holdStop(){
+  if(!holdState) return;
+  const st=holdState; holdState=null;
+  clearTimeout(st.delayT); clearInterval(st.tick);
+  document.removeEventListener('pointerup',holdStop,true); document.removeEventListener('pointercancel',holdStop,true); window.removeEventListener('blur',holdStop);
+  if(st.moved){
+    persist(); refreshRow(st.i);
+    if(st.edge==='start'){ if(data.utterances[st.i-1]) refreshRow(st.i-1); } else { if(data.utterances[st.i+1]) refreshRow(st.i+1); }
+    const u=data.utterances[st.i];
+    if(u){ audio.currentTime=Math.max(0, st.edge==='start'?u.start-0.3:u.end-0.8); }
+    setSyncStatus(`${st.edge==='start'?'开始':'结束'}时间 → ${fmtMs(st.edge==='start'?u.start:u.end)}（本次长按共调整 ${st.total.toFixed(2)} 秒，撤销一次即可还原）· 已跳到附近，可播放试听`);
+    st.btn.classList.remove('holding');
+  }
+}
+function holdStart(btn,e){
+  if(e.button!==undefined && e.button!==0) return;
+  const i=+btn.dataset.i, dir=+btn.dataset.nudge, edge=btn.dataset.edge, fine=e.shiftKey;
+  holdStop();
+  const t0=Date.now();
+  const st={i,dir,edge,btn,moved:false,total:0,fine};
+  holdState=st;
+  // first press: a single normal step (also covers a plain click). Not quiet, so a click behaves exactly as before.
+  st.firstDone=false;
+  st.delayT=setTimeout(()=>{
+    if(holdState!==st) return;
+    // the long press begins: take ONE snapshot (the first step already happened and had its own); fold it
+    st.moved=true; btn.classList.add('holding');
+    st.tick=setInterval(()=>{
+      if(holdState!==st) return;
+      const held=Date.now()-t0-HOLD_DELAY;
+      let stage=HOLD_STAGES[0]; for(const g of HOLD_STAGES) if(held>=g.after) stage=g;
+      const stepSize=fine?Math.min(stage.step,0.02):stage.step;
+      const r=nudgeBoundary(i,dir,false,edge,{step:stepSize,quiet:true,noSnapshot:true});
+      if(r==null){ holdStop(); return; }
+      st.total+=stepSize;
+    },60);
+  },HOLD_DELAY);
+  document.addEventListener('pointerup',holdStop,true); document.addEventListener('pointercancel',holdStop,true); window.addEventListener('blur',holdStop);
 }
 function deleteRow(i){
   const u=data.utterances[i]; if(!u) return;
@@ -1361,16 +1542,29 @@ $('#undo').addEventListener('click',undo);
 $('#redo').addEventListener('click',redo);
 $('#resetDraft').addEventListener('click',resetToBase);
 $('#mergeNow').addEventListener('click',()=>{
-  const n=autoMergeSameSpeaker();
   const g=mergeGap();
-  if(!n) alert(`没有符合“同一说话人、间隔≤${g} 秒、无嵌套插话”的相邻句。\n（说话人为 UNKNOWN 的句子不会合并；可以调大上面的“间隔”再试。）`);
-  else setSyncStatus(`已合并 ${n} 处（间隔≤${g} 秒）。不满意可以撤销（⌘Z）`);
+  const r=autoMergeSameSpeaker(true);
+  const rep=mergeReport(r.skipped||{},g);
+  if(!r.merged){
+    alert(`没有可以合并的相邻句（间隔≤${g} 秒）。\n\n${rep||'没有相邻句满足间隔条件，可以调大「间隔」。'}\n\n可以在「⚙ 合并条件」里放宽限制，或调大间隔。`);
+  }else{
+    setSyncStatus(`已合并 ${r.merged} 处（间隔≤${g} 秒）。${rep?'  '+rep.replace(/\n\s*/g,'；'):''} 不满意可以撤销（⌘Z）`);
+  }
 });
 const winOnlyBox=$('#winOnly');
 if(winOnlyBox){
   winOnlyBox.checked=localStorage.getItem('asr-winonly')!=='0';
   winOnlyBox.addEventListener('change',()=>localStorage.setItem('asr-winonly',winOnlyBox.checked?'1':'0'));
 }
+['mgSameSpk','mgUnknown','mgInterj','mgShort'].forEach(id=>{
+  const el=document.getElementById(id); if(!el) return;
+  const saved=localStorage.getItem('asr-'+id); if(saved!==null) el.checked=saved==='1';
+  el.addEventListener('change',()=>localStorage.setItem('asr-'+id,el.checked?'1':'0'));
+});
+$('#reasrClose').addEventListener('click',()=>{$('#reasrModal').hidden=true;});
+$('#reasrKeep').addEventListener('click',()=>{$('#reasrModal').hidden=true;});
+$('#reasrUse').addEventListener('click',applyReRecognize);
+$('#reasrPlay').addEventListener('click',()=>{ if(!reasrCtx) return; audio.currentTime=reasrCtx.start; audio.play(); const stop=()=>{ if(audio.currentTime>=reasrCtx.end){ audio.pause(); audio.removeEventListener('timeupdate',stop);} }; audio.addEventListener('timeupdate',stop); });
 const linkBox=$('#linkEdges');
 if(linkBox){
   linkBox.checked=localStorage.getItem('asr-linkedges')==='1';
@@ -1465,6 +1659,15 @@ $('#list').addEventListener('input',e=>{
   e.target.style.height='auto';e.target.style.height=Math.max(28,e.target.scrollHeight)+'px';
   persist();
 });
+$('#list').addEventListener('pointerdown',e=>{
+  const nb=e.target.closest('[data-nudge]'); if(!nb) return;
+  e.preventDefault(); e.stopPropagation();
+  // first step happens immediately on press (one undo entry); a long press then continues without extra undo entries
+  const i=+nb.dataset.i;
+  const r=nudgeBoundary(i,+nb.dataset.nudge,e.shiftKey,nb.dataset.edge,{step:e.shiftKey?0.02:0.1});
+  if(r==null) return;
+  holdStart(nb,e);
+});
 $('#list').addEventListener('click',e=>{
   const cand=e.target.closest('.candBtn');
   if(cand){
@@ -1478,7 +1681,7 @@ $('#list').addEventListener('click',e=>{
     return;
   }
   const nudgeBtn=e.target.closest('[data-nudge]');
-  if(nudgeBtn){ e.stopPropagation(); nudgeBoundary(+nudgeBtn.dataset.i,+nudgeBtn.dataset.nudge,e.shiftKey,nudgeBtn.dataset.edge); return; }
+  if(nudgeBtn){ e.stopPropagation(); if(e.detail===0){ nudgeBoundary(+nudgeBtn.dataset.i,+nudgeBtn.dataset.nudge,e.shiftKey,nudgeBtn.dataset.edge); } return; }
   const unmarkBtn=e.target.closest('.unmarkInt');
   if(unmarkBtn){ e.stopPropagation(); unmarkInterjection(+unmarkBtn.dataset.i,+unmarkBtn.dataset.idx); return; }
   const splitBtn=e.target.closest('.splitPiece');
@@ -1490,6 +1693,7 @@ $('#list').addEventListener('click',e=>{
   e.stopPropagation();
   const i=+btn.dataset.i;
   const u=data.utterances[i];
+  if(btn.classList.contains('reAsr')){ reRecognize(i); return; }
   if(btn.classList.contains('delRow')){ deleteRow(i); return; }
   if(btn.classList.contains('markInt')){ markSelectionAsInterjection(i); return; }
   if(btn.dataset.splittime){ splitAt(i,audio.currentTime); return; }
