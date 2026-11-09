@@ -56,13 +56,16 @@ input[type=range].scrubbing{accent-color:var(--amber)}
 .row.reviewed .idx:after{content:" ✓";color:var(--green);font-weight:700}
 .idx{font-variant-numeric:tabular-nums;color:var(--muted);font-size:11px;padding-top:4px;white-space:normal;line-height:1.45}
 .idx .endTime{color:#94a3b8}
-.nudge{display:flex;gap:3px;margin-top:3px}
+.nudge{display:flex;gap:3px;margin:2px 0;align-items:center}
+.nudgeLab{font-size:10px;color:#94a3b8;width:12px}
 .nudge button{font-size:10px;line-height:1;padding:2px 5px;border-radius:5px;color:var(--muted)}
 .nudge button:hover{color:var(--blue);border-color:#93b4ff}
 .tagSep{width:1px;background:var(--line);margin:0 2px}
 .tagRow{align-items:center}
 .tagLabel{font-size:11px;color:var(--muted)}
 .tagbtn.quick{border-style:dashed}
+.tagbtn.delRow{border-color:#fecaca;color:#b91c1c}
+.tagbtn.delRow:hover{background:#fef2f2}
 .tagbtn.markInt{border-color:#fdba74;color:#9a3412}
 .tagbtn.splitAt{border-color:#b7c8ff;color:#16389c}
 .nested{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
@@ -192,6 +195,9 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
   <label class="autoMergeWrap" title="同一说话人、间隔不超过右侧设定的秒数，自动合并为一句">
     <input type="checkbox" id="autoMerge" checked> 自动合并
   </label>
+  <label class="autoMergeWrap" title="打开后，调整某句的开始/结束时，如果邻句正好贴着（间隔≤0.15 秒），会把邻句相连的那一端一起移动。默认关闭：只改你点的这一端">
+    <input type="checkbox" id="linkEdges"> 联动邻句
+  </label>
   <label class="autoMergeWrap" title="合并间隔：相邻两句的间隔不超过这个秒数才会合并（0–10 秒）。对「自动合并」和「立即合并」都生效">
     间隔≤<input type="number" id="mergeGap" min="0" max="10" step="0.1" value="1" style="width:56px;font:inherit;border:1px solid var(--line);border-radius:6px;padding:3px 4px"> 秒
   </label>
@@ -266,7 +272,8 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
       <div><span class="kbd">Enter</span> 标记已确认并下一句</div>
       <div><span class="kbd">S</span> 在光标处拆成两句（按字数估算，可能不准）</div>
       <div><span class="kbd">T</span> 按<b>播放位置</b>精确拆分：先播放/暂停到要拆的时间点再按 T</div>
-      <div>句首时间下的 <span class="kbd">◀</span><span class="kbd">▶</span> 微调与上一句的分界（Shift 更细）</div>
+      <div>时间下的「始」「终」<span class="kbd">◀</span><span class="kbd">▶</span> 分别微调本句的开始/结束（Shift 更细）；邻句是否联动看顶部「联动邻句」</div>
+      <div>「🗑 删除」删掉一句（需确认，可撤销）</div>
       <div><span class="kbd">M</span> 与下一句合并（拆错了就合并后重拆）</div>
       <div><span class="kbd">⌘Z</span> 撤销上一步</div>
       <div>自动合并/立即合并：同一说话人且间隔≤「间隔」设置的秒数（默认 1 秒，可在顶部改）</div>
@@ -678,7 +685,7 @@ function buildRow(u,i){
     row.dataset.i=i;
     const confClass=u.speakerSource==='existing'||u.speakerSource==='reference'?'reference':u.speakerConfidence==='manual'?'':'auto';
     row.innerHTML=`
-      <div class="idx" title="起止时间（毫秒）">${fmtMs(u.start)}<br><span class="endTime">→ ${fmtMs(u.end)}</span>${i>0?`<div class="nudge" title="微调与上一句的分界（±0.1 秒；按住 Shift ±0.02 秒）"><button data-nudge="-1" data-i="${i}">◀</button><button data-nudge="1" data-i="${i}">▶</button></div>`:''}</div>
+      <div class="idx" title="起止时间（毫秒）">${fmtMs(u.start)}<div class="nudge" title="只调整这一句的【开始】时间（±0.1 秒；按住 Shift ±0.02 秒）。是否带动上一句的结束，由顶部「联动邻句」决定"><span class="nudgeLab">始</span><button data-nudge="-1" data-edge="start" data-i="${i}">◀</button><button data-nudge="1" data-edge="start" data-i="${i}">▶</button></div><span class="endTime">→ ${fmtMs(u.end)}</span><div class="nudge" title="只调整这一句的【结束】时间（±0.1 秒；按住 Shift ±0.02 秒）。是否带动下一句的开始，由顶部「联动邻句」决定"><span class="nudgeLab">终</span><button data-nudge="-1" data-edge="end" data-i="${i}">◀</button><button data-nudge="1" data-edge="end" data-i="${i}">▶</button></div></div>
       <div class="speakerWrap">
         <select class="sp ${u.speaker.startsWith('SALES')?'sales':u.speaker.startsWith('CUSTOMER')?'customer':''}" data-i="${i}">
           ${speakerOptions(u.speaker).map(s=>`<option value="${s}" ${s===u.speaker?'selected':''}>${s}</option>`).join('')}
@@ -694,6 +701,7 @@ function buildRow(u,i){
           <button class="tagbtn split" data-i="${i}" title="把光标处或选中位置拆成两句（S）。位置按字数比例估算，可能不准">✂ 按光标拆(S)</button>
           <button class="tagbtn splitAt" data-i="${i}" data-splittime="1" title="先播放到想拆的时间点并暂停，再点这里：按播放位置精确拆分（T）">⏱ 按播放位置拆(T)</button>
           <button class="tagbtn merge" data-i="${i}" title="与下一句合并（M）">⤵ 合并(M)</button>
+          <button class="tagbtn delRow" data-i="${i}" title="删除这一句（需要确认，可撤销 ⌘Z）。同步到 Label Studio 时，被删除的句子不会写入">🗑 删除</button>
           <button class="tagbtn markInt" data-i="${i}" title="先在文字里选中要标成插话的字，再点这里（I）。会把选中的字单独成为一个插话片段，可再指定它的说话人">⌗ 选中标为插话(I)</button>
           <span class="tagSep"></span>
           <button class="tagbtn quick ${u.speaker==='CUSTOMER_1'?'on':''}" data-i="${i}" data-quick="customer" title="快捷操作（C）：把说话人设为 CUSTOMER_1，并同时加上 overlap 标签（抢话）。这是两个动作，不是标签本身">→ 顾客1 + 抢话(C)</button>
@@ -822,23 +830,55 @@ function splitPiece(i, pieceIdx){
   data.utterances.splice(i,1,...rows);
   persist(); render(); seekTo(i);
 }
-function nudgeBoundary(i,dir,fine){
-  const cur=data.utterances[i], prev=data.utterances[i-1];
-  if(!cur||!prev) return;
-  const step=(fine?0.02:0.1)*dir;
-  const MIN=0.05;
-  let t=round3(cur.start+step);
-  const lo=prev.start+MIN, hi=cur.end-MIN;
-  if(t<lo||t>hi){ setSyncStatus('已到边界极限，不能再移动了',true); return; }
-  snapshot();
-  const touching=Math.abs(prev.end-cur.start)<=0.15;
-  cur.start=t;
-  if(touching) prev.end=t; else if(prev.end>t) prev.end=t;
+function linkEdges(){ const el=document.getElementById('linkEdges'); return !!(el&&el.checked); }
+function nudgeBoundary(i,dir,fine,edge){
+  edge=edge||'start';
+  const cur=data.utterances[i]; if(!cur) return;
+  const prev=data.utterances[i-1], next=data.utterances[i+1];
+  const step=(fine?0.02:0.1)*dir, MIN=0.05;
+  const link=linkEdges();
   const fit=(row)=>{ (row.pieces||[]).forEach(p=>{ if(p.start<row.start) p.start=row.start; if(p.end>row.end) p.end=row.end; }); row.pieces=(row.pieces||[]).filter(p=>p.end-p.start>=MIN_SPAN); };
-  fit(prev); fit(cur);
-  persist(); refreshRow(i); refreshRow(i-1);
-  audio.currentTime=Math.max(0,t-0.3);
-  setSyncStatus(`分界移到 ${fmtMs(t)}（已跳到分界前 0.3 秒，可播放试听）`);
+  let t;
+  if(edge==='start'){
+    t=round3(cur.start+step);
+    if(t<0||t>cur.end-MIN){ setSyncStatus('已到极限：开始时间不能晚于结束时间',true); return; }
+    const touching=prev && Math.abs(prev.end-cur.start)<=0.15;
+    if(link && touching && (t<prev.start+MIN)){ setSyncStatus('联动时，上一句不能再缩短了。可以先关闭「联动邻句」',true); return; }
+    snapshot();
+    cur.start=t;
+    let msg=`开始时间 → ${fmtMs(t)}`;
+    if(link && touching){ prev.end=t; fit(prev); msg+='（上一句的结束已联动）'; }
+    else if(prev && prev.end>t+0.001){ msg+=`（注意：与上一句重叠了 ${(prev.end-t).toFixed(2)} 秒）`; }
+    fit(cur); persist(); refreshRow(i); if(prev) refreshRow(i-1);
+    audio.currentTime=Math.max(0,t-0.3);
+    setSyncStatus(msg+' · 已跳到前 0.3 秒，可播放试听');
+  }else{
+    t=round3(cur.end+step);
+    if(t<cur.start+MIN){ setSyncStatus('已到极限：结束时间不能早于开始时间',true); return; }
+    if(t>(data.duration||1e9)){ setSyncStatus('已到录音末尾',true); return; }
+    const touching=next && Math.abs(next.start-cur.end)<=0.15;
+    if(link && touching && (t>next.end-MIN)){ setSyncStatus('联动时，下一句不能再缩短了。可以先关闭「联动邻句」',true); return; }
+    snapshot();
+    cur.end=t;
+    let msg=`结束时间 → ${fmtMs(t)}`;
+    if(link && touching){ next.start=t; fit(next); msg+='（下一句的开始已联动）'; }
+    else if(next && next.start<t-0.001){ msg+=`（注意：与下一句重叠了 ${(t-next.start).toFixed(2)} 秒）`; }
+    fit(cur); persist(); refreshRow(i); if(next) refreshRow(i+1);
+    audio.currentTime=Math.max(0,t-0.8);
+    setSyncStatus(msg+' · 已跳到结束前 0.8 秒，可播放试听');
+  }
+}
+function deleteRow(i){
+  const u=data.utterances[i]; if(!u) return;
+  const preview=(u.bodyText||u.text||'').replace(/\s+/g,' ').slice(0,30)||'（空）';
+  const ints=normalizedPieces(u).filter(p=>p.isInterjection).length;
+  if(!confirm(`删除这一句？\n\n${fmtMs(u.start)} → ${fmtMs(u.end)}　${u.speaker}\n“${preview}”${ints?`\n（含 ${ints} 个嵌套插话，会一起删除）`:''}\n\n可以用撤销（⌘Z）找回。`)) return;
+  snapshot();
+  data.utterances.splice(i,1);
+  if(active>=data.utterances.length) active=data.utterances.length-1;
+  persist(); render(); renderFilters(); updateSide();
+  setSyncStatus(`已删除 1 句（${fmtMs(u.start)}）。不对可撤销（⌘Z）`);
+  if(active>=0) seekTo(Math.min(i,data.utterances.length-1));
 }
 function round3(v){return Math.round(v*1000)/1000;}
 function alignBodyPieces(pieces,body){
@@ -1278,6 +1318,7 @@ async function syncToLabelStudio(){
     const existing=(pre.out.existing||[]);
     const lines=[`把当前页面的 ${rows.length} 句作为最终结果写入 task ${data.taskId}（项目 ${data.projectId}）。`];
     if(outside) lines.push(`（按“仅同步三段内”设置，不含窗口外 ${outside} 句）`);
+    lines.push('页面里已删除的句子，在 Label Studio 里也会被一并去掉（整体替换）。');
     if(machine) lines.push(`其中 ${machine} 句未逐句确认，将按当前机器建议一并写入。`);
     if(unknown) lines.push(`⚠ 有 ${unknown} 句说话人仍是 UNKNOWN，会按 UNKNOWN 写入。`);
     lines.push(`标签：${tagged} 句${tagKeys.length?'（'+tagKeys.join(', ')+'）':''}`);
@@ -1329,6 +1370,11 @@ const winOnlyBox=$('#winOnly');
 if(winOnlyBox){
   winOnlyBox.checked=localStorage.getItem('asr-winonly')!=='0';
   winOnlyBox.addEventListener('change',()=>localStorage.setItem('asr-winonly',winOnlyBox.checked?'1':'0'));
+}
+const linkBox=$('#linkEdges');
+if(linkBox){
+  linkBox.checked=localStorage.getItem('asr-linkedges')==='1';
+  linkBox.addEventListener('change',()=>localStorage.setItem('asr-linkedges',linkBox.checked?'1':'0'));
 }
 const mergeGapBox=$('#mergeGap');
 if(mergeGapBox){
@@ -1432,7 +1478,7 @@ $('#list').addEventListener('click',e=>{
     return;
   }
   const nudgeBtn=e.target.closest('[data-nudge]');
-  if(nudgeBtn){ e.stopPropagation(); nudgeBoundary(+nudgeBtn.dataset.i,+nudgeBtn.dataset.nudge,e.shiftKey); return; }
+  if(nudgeBtn){ e.stopPropagation(); nudgeBoundary(+nudgeBtn.dataset.i,+nudgeBtn.dataset.nudge,e.shiftKey,nudgeBtn.dataset.edge); return; }
   const unmarkBtn=e.target.closest('.unmarkInt');
   if(unmarkBtn){ e.stopPropagation(); unmarkInterjection(+unmarkBtn.dataset.i,+unmarkBtn.dataset.idx); return; }
   const splitBtn=e.target.closest('.splitPiece');
@@ -1444,6 +1490,7 @@ $('#list').addEventListener('click',e=>{
   e.stopPropagation();
   const i=+btn.dataset.i;
   const u=data.utterances[i];
+  if(btn.classList.contains('delRow')){ deleteRow(i); return; }
   if(btn.classList.contains('markInt')){ markSelectionAsInterjection(i); return; }
   if(btn.dataset.splittime){ splitAt(i,audio.currentTime); return; }
   if(btn.classList.contains('split')){ splitAt(i); return; }
