@@ -17,6 +17,8 @@ from funasr import AutoModel
 
 INTERJ = "嗯啊哦噢喔哎唉诶呀哈呃额"
 PUNCT = "，,。！？!?；;、"
+EDGE_GAP = 0.6
+MID_GAP = 0.3
 FINAL_KEEP = {"。": "。", "？": "？", "?": "？", "！": "！", "!": "！"}
 
 def final_punct(text):
@@ -69,8 +71,24 @@ def align_chars(text, timestamps):
         return None
     return [(c, t[0], t[1]) for c, t in zip(chars, timestamps)]
 
+def trailing_punct(text, count):
+    """For every aligned char, the punctuation that follows it in the original text."""
+    tails, seen = [""]*count, -1
+    for c in text:
+        if c.strip() and c not in PUNCT:
+            seen += 1
+        elif c in PUNCT and 0 <= seen < count:
+            tails[seen] += c
+    return tails
+
 def pieces_for(sentence):
-    """Split into body/interjection pieces, preserving absolute ms timestamps."""
+    """Split into body/interjection pieces, preserving absolute ms timestamps.
+
+    A filler (嗯/啊/哎...) is only pulled out as an interjection when it is clearly
+    separated from the speaker's own words: at least MID_GAP seconds on both sides
+    when it sits mid-sentence, or EDGE_GAP seconds from the body when it opens or
+    closes the sentence.  Fillers glued to the sentence stay in the body text.
+    """
     text = sentence["text"]
     aligned = align_chars(text, sentence["timestamps"])
     if not aligned:
@@ -78,6 +96,7 @@ def pieces_for(sentence):
                  "isInterjection": False}]
     n = len(aligned)
     closing = final_punct(text)
+    tails = trailing_punct(text, n)
     is_int = [False]*n
     i = 0
     while i < n:
@@ -97,22 +116,36 @@ def pieces_for(sentence):
             j = idx
             while j+1 < n and is_int[j+1]:
                 j += 1
-            left_gap = aligned[idx][1]-aligned[idx-1][2] if idx > 0 else 9
-            right_gap = aligned[j+1][1]-aligned[j][2] if j+1 < n else 9
-            if left_gap >= 0.08 or idx == 0:
-                cuts.add(idx)
-            if right_gap >= 0.08 or j == n-1:
-                cuts.add(j+1)
+            if idx == 0 and j == n-1:
+                pass
+            elif idx == 0:
+                if aligned[j+1][1]-aligned[j][2] >= EDGE_GAP:
+                    cuts.add(j+1)
+            elif j == n-1:
+                if aligned[idx][1]-aligned[idx-1][2] >= EDGE_GAP:
+                    cuts.add(idx)
+            else:
+                left_gap = aligned[idx][1]-aligned[idx-1][2]
+                right_gap = aligned[j+1][1]-aligned[j][2]
+                if left_gap >= MID_GAP and right_gap >= MID_GAP:
+                    cuts.add(idx)
+                    cuts.add(j+1)
             idx = j+1
         else:
             idx += 1
+    if cuts == {0, n}:
+        whole = all(is_int)
+        kept = text.strip().rstrip(PUNCT).rstrip()
+        return [{"text": kept + closing, "start": round(aligned[0][1], 3),
+                 "end": round(aligned[-1][2], 3), "isInterjection": whole}]
     cuts = sorted(cuts)
     pieces = []
     for a, b in zip(cuts, cuts[1:]):
         chars = aligned[a:b]
         if not chars:
             continue
-        body = "".join(c for c,_,_ in chars).strip()
+        body = "".join(c + tails[a + off] for off, (c, _, _) in enumerate(chars)).strip()
+        body = body.rstrip(PUNCT).rstrip()
         if not body:
             continue
         pieces.append({

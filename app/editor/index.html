@@ -224,6 +224,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
       <label><input type="checkbox" id="mgShort"> 允许合并很短的句子（≤1 秒且 ≤6 字）</label>
       <div class="sub" style="margin-top:4px">默认只合并「说话人相同、已标好、不含插话、不是很短的句子」。要对未标说话人的录音合并，请勾选「允许合并 UNKNOWN」。</div>
     </div></details>
+  <button id="foldInterj" title="把紧贴正文的语气词（哎、啊、嗯…）并回同一句：句首/句尾间隔小于 0.6 秒、句中两侧间隔小于 0.3 秒的会并回；已人工确认的句子和已单独指定说话人的插话不动。可撤销">⤾ 并回紧贴语气词</button>
   <button id="undo" title="撤销最近一步编辑（⌘Z）">↶ 撤销一步</button>
   <button id="redo" title="重做最近一次撤销（⇧⌘Z）">↷ 重做一步</button>
   <button id="resetDraft" title="清除当前录音的全部本地改动，回到 ASR 初始底稿">⟲ 重置为底稿</button>
@@ -1133,6 +1134,53 @@ function markSelectionAsInterjection(i){
   persist(); refreshRow(i);
   setSyncStatus(`已把「${mid}」标为插话（约 ${fmtMs(Math.max(t1,p.start))}–${fmtMs(t2)}，时间按字数估算，可用「按播放位置拆」或到插话旁调整说话人）。不对可撤销（⌘Z）`);
 }
+function foldGluedInterjections(){
+  if(!data) return;
+  const EDGE=0.6, MID=0.3;
+  const before=JSON.stringify(data.utterances);
+  let folded=0, rows=0;
+  const next=data.utterances.map(u=>{
+    if(u.reviewed || !u.pieces || u.pieces.length<2) return u;
+    let pieces=u.pieces.map(p=>({...p})).sort((a,b)=>a.start-b.start);
+    let changed=false;
+    for(let guard=0; guard<20; guard++){
+      const k=pieces.findIndex((p,idx)=>{
+        if(!p.isInterjection) return false;
+        if(p.speaker && p.speaker!=='UNKNOWN' && p.speaker!==u.speaker) return false;
+        const prev=pieces[idx-1], nxt=pieces[idx+1];
+        if(prev && prev.isInterjection) return false;
+        if(nxt && nxt.isInterjection) return false;
+        if(!prev && !nxt) return false;
+        const gl=prev? p.start-prev.end : null, gr=nxt? nxt.start-p.end : null;
+        if(!prev) return gr<EDGE;
+        if(!nxt) return gl<EDGE;
+        return gl<MID || gr<MID;
+      });
+      if(k<0) break;
+      const p=pieces[k], prev=pieces[k-1], nxt=pieces[k+1];
+      const gl=prev? p.start-prev.end : Infinity, gr=nxt? nxt.start-p.end : Infinity;
+      if(prev && gl<=gr){
+        prev.text=(prev.text||'')+(p.text||''); prev.end=Math.max(prev.end,p.end);
+        pieces.splice(k,1);
+        if(nxt && !nxt.isInterjection && gr<MID){ prev.text=(prev.text||'')+(nxt.text||''); prev.end=Math.max(prev.end,nxt.end); pieces.splice(k,1); }
+      }else{
+        nxt.text=(p.text||'')+(nxt.text||''); nxt.start=Math.min(nxt.start,p.start);
+        pieces.splice(k,1);
+      }
+      folded++; changed=true;
+    }
+    if(!changed) return u;
+    rows++;
+    const body=pieces.filter(x=>!x.isInterjection).map(x=>x.text||'').join('');
+    return {...u,pieces,bodyText:body,text:pieces.map(x=>x.text||'').join(''),
+            hasInterjection:pieces.some(x=>x.isInterjection)};
+  });
+  if(!folded){ setSyncStatus('没有需要并回的紧贴语气词（已人工确认的句子不会处理）'); return; }
+  undoStack.push(before); if(undoStack.length>50) undoStack.shift(); redoStack.length=0; updateHistoryButtons();
+  data.utterances=next;
+  persist(); render();
+  setSyncStatus(`已把 ${folded} 处紧贴正文的语气词并回 ${rows} 句。不对可撤销（⌘Z）`);
+}
 function unmarkInterjection(i,pieceIdx){
   const u=data.utterances[i];
   const pieces=normalizedPieces(u).map(p=>({...p}));
@@ -1541,6 +1589,7 @@ async function syncToLabelStudio(){
 $('#undo').addEventListener('click',undo);
 $('#redo').addEventListener('click',redo);
 $('#resetDraft').addEventListener('click',resetToBase);
+$('#foldInterj').addEventListener('click',foldGluedInterjections);
 $('#mergeNow').addEventListener('click',()=>{
   const g=mergeGap();
   const r=autoMergeSameSpeaker(true);
