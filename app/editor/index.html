@@ -224,6 +224,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
       <label><input type="checkbox" id="mgShort"> 允许合并很短的句子（≤1 秒且 ≤6 字）</label>
       <div class="sub" style="margin-top:4px">默认只合并「说话人相同、已标好、不含插话、不是很短的句子」。要对未标说话人的录音合并，请勾选「允许合并 UNKNOWN」。</div>
     </div></details>
+  <label class="autoMergeWrap" title="拆分后，自动把两句边界上没有人声的静音/空白时间段裁掉（读取音频能量判断，最多处理这一句的首尾，不会动句子中间）"><input type="checkbox" id="trimSilence" checked> 拆分后去静音</label>
   <button id="foldInterj" title="把紧贴正文的语气词（哎、啊、嗯…）并回同一句：句首/句尾间隔小于 0.6 秒、句中两侧间隔小于 0.3 秒的会并回；已人工确认的句子和已单独指定说话人的插话不动。可撤销">⤾ 并回紧贴语气词</button>
   <button id="undo" title="撤销最近一步编辑（⌘Z）">↶ 撤销一步</button>
   <button id="redo" title="重做最近一次撤销（⇧⌘Z）">↷ 重做一步</button>
@@ -1204,6 +1205,69 @@ function unmarkInterjection(i,pieceIdx){
   persist(); refreshRow(i);
   setSyncStatus('已改回正文');
 }
+// ---- silence trimming (energy based, reads only the needed WAV bytes) ----
+const WAV_HEADER=44;
+async function readPcm(src,t0,t1){
+  const rate=16000, a=Math.max(0,Math.floor(t0*rate)), b=Math.max(a,Math.ceil(t1*rate));
+  const res=await fetch(src,{headers:{Range:`bytes=${WAV_HEADER+a*2}-${WAV_HEADER+b*2-1}`}});
+  if(res.status!==206&&res.status!==200) throw new Error('音频读取失败 HTTP '+res.status);
+  const buf=await res.arrayBuffer();
+  const n=Math.floor(buf.byteLength/2);
+  return {samples:new Int16Array(buf.slice(0,n*2)),rate,offset:a/rate};
+}
+function frameEnergies(pcm,frameSec=0.02){
+  const size=Math.round(pcm.rate*frameSec), out=[];
+  for(let i=0;i+size<=pcm.samples.length;i+=size){
+    let sum=0; for(let k=0;k<size;k++){const v=pcm.samples[i+k]/32768; sum+=v*v;}
+    out.push(Math.sqrt(sum/size));
+  }
+  return out;
+}
+async function voicedBounds(start,end){
+  const pcm=await readPcm(data.audio,Math.max(0,start-0.3),end+0.3);
+  const e=frameEnergies(pcm);
+  if(e.length<5) return null;
+  const sorted=[...e].sort((x,y)=>x-y);
+  const floor=sorted[Math.floor(sorted.length*0.1)]||0;
+  const peak=sorted[Math.floor(sorted.length*0.95)]||0;
+  if(peak<0.004||peak<floor*2.5) return null;
+  const thr=Math.max(floor*2.5,peak*0.12,0.0025);
+  const frame=0.02, base=pcm.offset;
+  const fs=Math.max(0,Math.floor((start-base)/frame)), fe=Math.min(e.length-1,Math.ceil((end-base)/frame));
+  let first=-1,last=-1;
+  for(let f=fs;f<=fe;f++){ if(e[f]>=thr){ if(first<0) first=f; last=f; } }
+  if(first<0) return {none:true};
+  return {start:base+first*frame,end:base+(last+1)*frame};
+}
+async function trimRowEdges(row,{lead=0.05}={}){
+  const vb=await voicedBounds(row.start,row.end);
+  if(!vb||vb.none) return {changed:false,none:!!(vb&&vb.none)};
+  let ns=Math.max(row.start,round3(vb.start-lead)), ne=Math.min(row.end,round3(vb.end+lead));
+  if(ne-ns<0.1) return {changed:false};
+  if(ns-row.start<0.08) ns=row.start;
+  if(row.end-ne<0.08) ne=row.end;
+  if(ns===row.start&&ne===row.end) return {changed:false};
+  const trimmed={start:round3(ns-row.start),end:round3(row.end-ne)};
+  row.start=ns; row.end=ne;
+  if(row.pieces&&row.pieces.length){
+    row.pieces.forEach(p=>{ p.start=Math.max(p.start,ns); p.end=Math.min(p.end,ne); });
+    row.pieces=row.pieces.filter(p=>p.end-p.start>0.005);
+  }
+  return {changed:true,...trimmed};
+}
+async function trimAfterSplit(rows){
+  if(!$('#trimSilence')?.checked) return;
+  try{
+    const notes=[];
+    const taskId=data.taskId;
+    for(const row of rows){
+      if(!data||data.taskId!==taskId||!data.utterances.includes(row)) continue;
+      const r=await trimRowEdges(row);
+      if(r.changed) notes.push(`${fmtMs(row.start)}–${fmtMs(row.end)} 裁掉头 ${r.start.toFixed(2)} 秒、尾 ${r.end.toFixed(2)} 秒`);
+    }
+    if(notes.length&&data&&data.taskId===taskId){ persist(); render(); setSyncStatus(`已拆分并去静音：${notes.join('；')}。不满意可撤销（⌘Z）`); }
+  }catch(e){ console.warn('trim failed',e); }
+}
 function splitAt(i,atTime){
   const u=data.utterances[i];
   const ta=document.querySelector(`.txt[data-i="${i}"]`);
@@ -1262,6 +1326,7 @@ function splitAt(i,atTime){
   data.utterances.splice(i,1,a,b);
   persist(); render(); seekTo(i);
   setSyncStatus(`已拆分，切点 ${fmtMs(cutTime)}。可在句首的时间上点 ◀ ▶ 微调，或「合并」后重拆`);
+  trimAfterSplit([a,b]);
 }
 
 // Merge two adjacent rows. Speaker: whichever side has more characters wins.
