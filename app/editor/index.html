@@ -200,7 +200,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
   <div class="spacer"></div>
   <button id="setupBtn" title="环境与服务：检测、安装、启用 ASR / 声纹 / Label Studio 连接">⚙ 环境与服务<span id="setupDot" class="setupDot"></span></button>
   <button id="voiceBtn" title="声纹总配置：首次初始化、登记样本、批量定人">🎙 声纹配置</button>
-  <label class="autoMergeWrap" title="只把前/中/尾三段窗口内的句子写回 Label Studio"><input type="checkbox" id="winOnly" checked> 仅同步三段内</label>
+  <label class="autoMergeWrap" title="只把前/中/尾三段窗口内的句子写回 Label Studio；「导出 Label Studio JSON」也遵循这个选项"><input type="checkbox" id="winOnly" checked> 仅同步/导出三段内</label>
   <button id="sync" class="primary" title="把当前语音的校对结果写回 Label Studio">↥ 同步到 Label Studio</button>
   <button id="prev">↑ 上一句</button>
   <button id="play">▶ 播放当前句</button>
@@ -1826,9 +1826,9 @@ document.addEventListener('keydown',e=>{
     persist(); refreshRow(active); seekTo(active+1);
   }
 });
-function exportPayload(){
+function exportPayload(list=data.utterances){
   const result=[];
-  data.utterances.forEach((u,idx)=>{
+  list.forEach((u,idx)=>{
     const baseId=`u${idx.toString().padStart(4,'0')}`;
     const pieces=normalizedPieces(u);
     const bodyPieces=pieces.filter(p=>!p.isInterjection);
@@ -1858,11 +1858,16 @@ function exportPayload(){
   return result;
 }
 function exportLabels(){
-  const result=exportPayload();
+  flushPersist();
+  const winOnly=!!$('#winOnly')?.checked && (data.windows||[]).length>0;
+  const list=winOnly?data.utterances.filter(u=>u.window&&u.window!=='full'):data.utterances;
+  if(!list.length){ alert('三段窗口内没有句子可导出。取消勾选“仅同步三段内”可导出全部。'); return; }
+  const result=exportPayload(list);
   const audio=bundle?.recordings?.find(r=>r.taskId===data.taskId)?.lsAudio;
   if(!audio){ alert('缺少该录音在 Label Studio 的音频路径，无法导出。'); return; }
   const payload=[{data:{audio},annotations:[{result}]}];
-  download(`task${data.taskId}_${data.title}_labels.json`,JSON.stringify(payload,null,2));
+  download(`task${data.taskId}_${data.title}_labels${winOnly?'_3windows':''}.json`,JSON.stringify(payload,null,2));
+  setSyncStatus(winOnly?`已导出三段内 ${list.length} 句（不含窗口外 ${data.utterances.length-list.length} 句）`:`已导出全部 ${list.length} 句`);
 }
 function download(name,text){
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:'application/json'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
