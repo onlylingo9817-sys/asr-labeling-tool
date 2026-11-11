@@ -82,8 +82,19 @@ input[type=range].scrubbing{accent-color:var(--amber)}
 .candBtn.on{background:#e8efff;border-color:#93b4ff;color:#16389c;font-weight:600}
 .candBtn.skip{color:#94a3b8}
 .candBtn .score{font-variant-numeric:tabular-nums;color:#94a3b8;font-size:10px}
-.nestedChip{font-size:11px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:999px;padding:2px 8px;cursor:pointer;font-variant-numeric:tabular-nums}
-.nestedChip:hover{background:#ffedd5}
+.nestedChip{font-size:11px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:10px;padding:5px 9px;cursor:default;font-variant-numeric:tabular-nums;display:block;min-width:300px;max-width:100%}
+.nestedChip.playing{background:#ffedd5;border-color:#fb923c}
+.nestedHead{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.nestedHead .nTxt{font-weight:600}
+.nestedPos{color:#7c2d12;font-size:10.5px;margin-top:3px}
+.nestedBar{position:relative;height:8px;margin:5px 0 3px;border-radius:4px;background:#fde7cf;overflow:hidden}
+.nestedBar i{position:absolute;top:0;bottom:0;background:#ea580c;border-radius:4px;min-width:3px}
+.nestedBar b{position:absolute;top:0;bottom:0;width:1px;background:#fff;opacity:.9}
+.nestedTime{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:3px}
+.nestedTime .nudge{margin:0}
+.nestedTime .tm{font-variant-numeric:tabular-nums;color:#7c2d12}
+.pPlay{font:inherit;font-size:10px;padding:0 6px;border-radius:6px;border:1px solid #fb923c;background:#fff;color:#9a3412;cursor:pointer}
+.pPlay:hover{background:#ffedd5}
 .splitPiece{font:inherit;font-size:10px;padding:0 5px;margin-left:4px;border-radius:6px;border:1px solid #fdba74;background:#fff;color:#9a3412;cursor:pointer}
 .unmarkInt{font:inherit;font-size:10px;padding:0 5px;margin-left:4px;border-radius:6px;border:1px solid #d6d3d1;background:#fff;color:#57534e;cursor:pointer}
 .unmarkInt:hover{background:#f5f5f4}
@@ -1053,6 +1064,115 @@ function holdStart(btn,e){
   },HOLD_DELAY);
   document.addEventListener('pointerup',holdStop,true); document.addEventListener('pointercancel',holdStop,true); window.addEventListener('blur',holdStop);
 }
+// ---------------- nested interjection: adjust its own start/end, play only it ----------------
+function pieceSorted(u){
+  if(u.pieces && u.pieces.length) u.pieces.sort((a,b)=>a.start-b.start);
+  return u.pieces||[];
+}
+function refreshChip(i,idx){
+  const u=data.utterances[i]; if(!u) return;
+  const chip=document.querySelector(`#list .nestedChip[data-i="${i}"][data-idx="${idx}"]`);
+  const p=pieceSorted(u)[idx]; if(!chip||!p) return;
+  chip.dataset.p=p.start; chip.dataset.pend=p.end;
+  chip.querySelector('.pStart').textContent=fmtMs(p.start);
+  chip.querySelector('.pEnd').textContent=fmtMs(p.end);
+  chip.querySelector('.pDur').textContent=(p.end-p.start).toFixed(2);
+  const pieces=normalizedPieces(u);
+  chip.querySelector('.nestedPos').textContent='位置：'+interjPosition(u,pieces,idx);
+  const total=Math.max(0.001,u.end-u.start);
+  const left=Math.max(0,Math.min(100,100*(p.start-u.start)/total)), width=Math.max(0.5,Math.min(100-left,100*(p.end-p.start)/total));
+  const bar=chip.querySelector('.nestedBar i'); if(bar){ bar.style.left=left+'%'; bar.style.width=width+'%'; }
+}
+function nudgePiece(i,idx,edge,dir,step,opt){
+  opt=opt||{};
+  const u=data.utterances[i]; if(!u) return null;
+  const ps=pieceSorted(u); const p=ps[idx];
+  if(!p||!p.isInterjection) return null;
+  const MIN=0.05;
+  const t=round3((edge==='start'?p.start:p.end)+dir*step);
+  const prevBody=ps.slice(0,idx).reverse().find(x=>!x.isInterjection);
+  if(edge==='start'){
+    if(t<u.start){ setSyncStatus('已到极限：插话不能早于本句开始',true); return null; }
+    if(t>p.end-MIN){ setSyncStatus('已到极限：开始时间不能晚于结束时间',true); return null; }
+  }else{
+    if(t>u.end){ setSyncStatus('已到极限：插话不能晚于本句结束',true); return null; }
+    if(t<p.start+MIN){ setSyncStatus('已到极限：结束时间不能早于开始时间',true); return null; }
+  }
+  if(!opt.noSnapshot) snapshot();
+  if(edge==='start') p.start=t; else p.end=t;
+  u.reviewed=false; if(u.speakerConfidence==='manual') u.speakerConfidence='low';
+  refreshChip(i,idx);
+  setSyncStatus(`插话${edge==='start'?'开始':'结束'} → ${fmtMs(t)}（${fmtMs(p.start)}–${fmtMs(p.end)}，时长 ${(p.end-p.start).toFixed(2)} 秒）`);
+  if(!opt.quiet){ persist(); playPiece(i,idx,{from:edge==='start'?Math.max(u.start,p.start-0.3):Math.max(u.start,p.end-0.6)}); }
+  return t;
+}
+let pieceStop=null;
+function stopPiecePlay(){
+  if(pieceStop){ audio.removeEventListener('timeupdate',pieceStop.fn); pieceStop=null; }
+  document.querySelectorAll('.nestedChip.playing').forEach(c=>c.classList.remove('playing'));
+}
+function playPiece(i,idx,opt){
+  opt=opt||{};
+  const u=data.utterances[i]; if(!u) return;
+  const p=pieceSorted(u)[idx]; if(!p) return;
+  stopPiecePlay();
+  const pad=0.03;
+  const endAt=p.end+pad;
+  audio.currentTime=Math.max(0,opt.from!=null?opt.from:p.start-pad);
+  const chip=document.querySelector(`#list .nestedChip[data-i="${i}"][data-idx="${idx}"]`);
+  if(chip) chip.classList.add('playing');
+  const fn=()=>{ if(audio.currentTime>=endAt||audio.ended){ audio.pause(); stopPiecePlay(); } };
+  pieceStop={fn};
+  audio.addEventListener('timeupdate',fn);
+  audio.play().catch(()=>{});
+}
+let pHold=null;
+function pHoldStop(){
+  if(!pHold) return;
+  const st=pHold; pHold=null;
+  clearTimeout(st.delayT); clearInterval(st.tick);
+  document.removeEventListener('pointerup',pHoldStop,true); document.removeEventListener('pointercancel',pHoldStop,true); window.removeEventListener('blur',pHoldStop);
+  st.btn.classList.remove('holding');
+  if(st.moved){
+    persist();
+    const u=data.utterances[st.i]; const p=u&&pieceSorted(u)[st.idx];
+    if(p) playPiece(st.i,st.idx,{from:Math.max(u.start,(st.edge==='start'?p.start:p.end)-0.4)});
+    setSyncStatus(`插话${st.edge==='start'?'开始':'结束'}时间 → ${fmtMs(st.edge==='start'?p.start:p.end)}（本次长按共调整 ${st.total.toFixed(2)} 秒，撤销一次即可还原）`);
+  }
+}
+$('#list').addEventListener('pointerdown',e=>{
+  const nb=e.target.closest('[data-pnudge]'); if(!nb) return;
+  e.preventDefault(); e.stopPropagation();
+  const i=+nb.dataset.i, idx=+nb.dataset.idx, dir=+nb.dataset.pnudge, edge=nb.dataset.pedge, fine=e.shiftKey;
+  pHoldStop();
+  const first=nudgePiece(i,idx,edge,dir,fine?0.02:0.1);
+  if(first==null) return;
+  const t0=Date.now();
+  const st={i,idx,dir,edge,btn:nb,moved:false,total:0};
+  pHold=st;
+  st.delayT=setTimeout(()=>{
+    if(pHold!==st) return;
+    st.moved=true; nb.classList.add('holding'); stopPiecePlay(); audio.pause();
+    st.tick=setInterval(()=>{
+      if(pHold!==st) return;
+      const held=Date.now()-t0-HOLD_DELAY;
+      let stage=HOLD_STAGES[0]; for(const g of HOLD_STAGES) if(held>=g.after) stage=g;
+      const stepSize=fine?Math.min(stage.step,0.02):stage.step;
+      const r=nudgePiece(i,idx,edge,dir,stepSize,{quiet:true,noSnapshot:true});
+      if(r==null){ pHoldStop(); return; }
+      st.total+=stepSize;
+    },60);
+  },HOLD_DELAY);
+  document.addEventListener('pointerup',pHoldStop,true); document.addEventListener('pointercancel',pHoldStop,true); window.addEventListener('blur',pHoldStop);
+},true);
+function nestedChipClick(e){
+  const pp=e.target.closest('.pPlay');
+  if(pp){ e.stopPropagation(); playPiece(+pp.dataset.i,+pp.dataset.idx); return true; }
+  const nb=e.target.closest('[data-pnudge]');
+  if(nb){ e.stopPropagation(); if(e.detail===0) nudgePiece(+nb.dataset.i,+nb.dataset.idx,nb.dataset.pedge,+nb.dataset.pnudge,e.shiftKey?0.02:0.1); return true; }
+  return false;
+}
+
 function deleteRow(i){
   const u=data.utterances[i]; if(!u) return;
   const preview=(u.bodyText||u.text||'').replace(/\s+/g,' ').slice(0,30)||'（空）';
@@ -1350,20 +1470,49 @@ function candButtons(u,i){
   return c.map((x,idx)=>`<button class="candBtn${x.role===u.speaker?' on':''}" data-i="${i}" data-role="${x.role}" title="相似度 ${x.score}">${x.role} <span class="score">${x.score.toFixed(2)}</span></button>`).join('')
     + `<button class="candBtn skip" data-i="${i}" data-role="UNKNOWN">都不是</button>`;
 }
+function interjPosition(u,pieces,idx){
+  const p=pieces[idx];
+  const bodyBefore=pieces.slice(0,idx).filter(x=>!x.isInterjection).map(x=>(x.text||'').replace(/[，,。！？!?；;、\s]/g,'')).join('').length;
+  const bodyAll=pieces.filter(x=>!x.isInterjection).map(x=>(x.text||'').replace(/[，,。！？!?；;、\s]/g,'')).join('').length;
+  const total=Math.max(0.001,u.end-u.start);
+  const from=p.start-u.start, to=u.end-p.end;
+  let where;
+  if(bodyBefore===0) where='句首（正文第 1 个字之前）';
+  else if(bodyBefore>=bodyAll) where=`句尾（正文最后一个字之后，共 ${bodyAll} 字）`;
+  else where=`句中：正文第 ${bodyBefore} 个字之后（共 ${bodyAll} 字）`;
+  return `${where} · 距句首 ${from.toFixed(2)} 秒，距句尾 ${to.toFixed(2)} 秒`;
+}
 function nestedChips(u,i){
   const pieces=normalizedPieces(u);
   const ints=pieces.map((p,idx)=>({p,idx})).filter(x=>x.p.isInterjection);
   if(!ints.length) return '';
   const isWholeRow = pieces.length===1 && ints.length===1;
   if(isWholeRow) return '';                       // row already is the interjection
-  return `<div class="nested">${ints.map(({p,idx})=>`
-    <span class="nestedChip" data-i="${i}" data-p="${p.start}" title="嵌在 ${fmtMs(u.start)} → ${fmtMs(u.end)} 之间；点击试听">↳ ${escapeHtml((p.text||'').replace(/，$/,''))} ${fmtMs(p.start)}–${fmtMs(p.end)}
-      <select class="pieceSp" data-i="${i}" data-idx="${idx}" title="这句插话的说话人；默认与父句独立，可单独指定">
-        ${speakerOptions(p.speaker||u.speaker).map(s=>`<option value="${s}" ${s===(p.speaker||u.speaker)?'selected':''}>${s}</option>`).join('')}
-      </select>
-      <button class="splitPiece" data-i="${i}" data-idx="${idx}" title="把这个插入语拆成独立句（使用它自己的毫秒精度起止）">拆出</button>
-      <button class="unmarkInt" data-i="${i}" data-idx="${idx}" title="这其实不是插话：改回正文">改回正文</button>
-    </span>`).join('')}</div>`;
+  const total=Math.max(0.001,u.end-u.start);
+  return `<div class="nested">${ints.map(({p,idx},n)=>{
+    const left=Math.max(0,Math.min(100,100*(p.start-u.start)/total)), width=Math.max(0.5,Math.min(100-left,100*(p.end-p.start)/total));
+    const marks=pieces.filter(x=>!x.isInterjection).map(x=>Math.max(0,Math.min(100,100*(x.start-u.start)/total))).filter(v=>v>0.5);
+    return `
+    <span class="nestedChip" data-i="${i}" data-idx="${idx}" data-p="${p.start}" data-pend="${p.end}" title="嵌在 ${fmtMs(u.start)} → ${fmtMs(u.end)} 之间">
+      <div class="nestedHead">
+        <span class="nTxt">↳ 插话${ints.length>1?' '+(n+1):''}：${escapeHtml((p.text||'').replace(/，$/,''))}</span>
+        <button class="pPlay" data-i="${i}" data-idx="${idx}" title="只播放这一段插话（到结束自动停止）">▶ 听这一段</button>
+        <select class="pieceSp" data-i="${i}" data-idx="${idx}" title="这句插话的说话人；默认与父句独立，可单独指定">
+          ${speakerOptions(p.speaker||u.speaker).map(s=>`<option value="${s}" ${s===(p.speaker||u.speaker)?'selected':''}>${s}</option>`).join('')}
+        </select>
+        <button class="splitPiece" data-i="${i}" data-idx="${idx}" title="把这个插入语拆成独立句（使用它自己的毫秒精度起止）">拆出</button>
+        <button class="unmarkInt" data-i="${i}" data-idx="${idx}" title="这其实不是插话：改回正文">改回正文</button>
+      </div>
+      <div class="nestedPos">位置：${interjPosition(u,pieces,idx)}</div>
+      <div class="nestedBar" title="整条 = 这一句的 ${fmtMs(u.start)} → ${fmtMs(u.end)}；橙色 = 插话所在时间段"><i style="left:${left}%;width:${width}%"></i></div>
+      <div class="nestedTime">
+        <span class="tm pStart">${fmtMs(p.start)}</span>
+        <div class="nudge" title="只调整插话的【开始】时间（点一下 ±0.1 秒；长按越来越快；Shift 精细 ±0.02 秒）。不会超出本句范围"><span class="nudgeLab">始</span><button data-pnudge="-1" data-pedge="start" data-i="${i}" data-idx="${idx}">◀</button><button data-pnudge="1" data-pedge="start" data-i="${i}" data-idx="${idx}">▶</button></div>
+        <span class="tm">→ <span class="pEnd">${fmtMs(p.end)}</span></span>
+        <div class="nudge" title="只调整插话的【结束】时间（点一下 ±0.1 秒；长按越来越快；Shift 精细 ±0.02 秒）。不会超出本句范围"><span class="nudgeLab">终</span><button data-pnudge="-1" data-pedge="end" data-i="${i}" data-idx="${idx}">◀</button><button data-pnudge="1" data-pedge="end" data-i="${i}" data-idx="${idx}">▶</button></div>
+        <span class="tm" style="color:#a8a29e">时长 <span class="pDur">${(p.end-p.start).toFixed(2)}</span> 秒</span>
+      </div>
+    </span>`;}).join('')}</div>`;
 }
 function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function autoGrowAll(){document.querySelectorAll('.txt').forEach(t=>{t.style.height='auto';t.style.height=Math.max(28,t.scrollHeight)+'px';});}
@@ -1802,8 +1951,9 @@ $('#list').addEventListener('click',e=>{
   if(unmarkBtn){ e.stopPropagation(); unmarkInterjection(+unmarkBtn.dataset.i,+unmarkBtn.dataset.idx); return; }
   const splitBtn=e.target.closest('.splitPiece');
   if(splitBtn){ e.stopPropagation(); splitPiece(+splitBtn.dataset.i,+splitBtn.dataset.idx); return; }
+  if(nestedChipClick(e)) return;
   const chip=e.target.closest('.nestedChip');
-  if(chip && e.target.tagName!=='SELECT'){ e.stopPropagation(); const t=+chip.dataset.p; audio.currentTime=t; audio.play(); return; }
+  if(chip && e.target.tagName!=='SELECT' && !e.target.closest('button')){ e.stopPropagation(); playPiece(+chip.dataset.i,+chip.dataset.idx); return; }
   const btn=e.target.closest('.tagbtn');
   if(!btn)return;
   e.stopPropagation();
