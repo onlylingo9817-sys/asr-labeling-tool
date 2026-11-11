@@ -92,14 +92,23 @@ input[type=range].scrubbing{accent-color:var(--amber)}
 .rowScrub .rsPlay:hover{background:#eef4ff}
 .rsTrack{position:relative;flex:1;height:22px;min-width:120px;touch-action:none;cursor:ew-resize}
 .rsTrack .rsBase{position:absolute;left:0;right:0;top:9px;height:4px;border-radius:2px;background:#dbe3ee}
-.rsTrack .rsInt{position:absolute;top:6px;height:10px;border-radius:3px;background:#fb923c;opacity:.85;pointer-events:none}
+.rsTrack .rsInt{position:absolute;top:4px;height:14px;min-width:6px;border-radius:3px;background:#fb923c;opacity:.9;cursor:pointer}
 .rsTrack .rsDone{position:absolute;left:0;top:9px;height:4px;border-radius:2px;background:#3b6df0;pointer-events:none;width:0}
 .rsTrack .rsHead{position:absolute;top:2px;width:3px;height:18px;margin-left:-1px;border-radius:2px;background:#dc2626;pointer-events:none;left:0}
 .rsTime{flex:none;min-width:98px;text-align:right}
 .rowScrub.live{border-color:#93b4ff;background:#f5f8ff}
-.nestedBar{position:relative;height:8px;margin:5px 0 3px;border-radius:4px;background:#fde7cf;overflow:hidden}
-.nestedBar i{position:absolute;top:0;bottom:0;background:#ea580c;border-radius:4px;min-width:3px}
-.nestedBar b{position:absolute;top:0;bottom:0;width:1px;background:#fff;opacity:.9}
+.nestedBar{position:relative;height:30px;margin:6px 0 3px;border-radius:6px;background:#fde7cf;overflow:hidden;touch-action:none;user-select:none}
+.nestedBar .nbWin{position:absolute;left:6px;right:6px;top:0;bottom:0}
+.nestedBar .nbSeg{position:absolute;top:4px;bottom:4px;min-width:8px;border-radius:5px;background:#ea580c;cursor:grab;box-shadow:0 0 0 1px #c2410c inset}
+.nestedBar .nbSeg:active,.nestedBar.dragging .nbSeg{cursor:grabbing;background:#c2410c}
+.nestedBar .nbH{position:absolute;top:-1px;bottom:-1px;width:10px;cursor:ew-resize}
+.nestedBar .nbH::after{content:"";position:absolute;top:6px;bottom:6px;left:3px;width:3px;border-radius:2px;background:#fff;opacity:.9}
+.nestedBar .nbH.l{left:-3px}
+.nestedBar .nbH.r{right:-3px}
+.nestedBar .nbEdge{position:absolute;top:0;bottom:0;width:2px;background:#7c2d12;opacity:.55}
+.nestedBar .nbHead{position:absolute;top:0;bottom:0;width:2px;background:#dc2626;pointer-events:none}
+.nestedBar .nbScale{position:absolute;left:6px;right:6px;bottom:0;height:0}
+.nbLegend{display:flex;justify-content:space-between;font-size:10px;color:#a8a29e;font-variant-numeric:tabular-nums;margin-bottom:2px}
 .nestedTime{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:3px}
 .nestedTime .nudge{margin:0}
 .nestedTime .tm{font-variant-numeric:tabular-nums;color:#7c2d12}
@@ -1092,7 +1101,7 @@ function refreshChip(i,idx){
   chip.querySelector('.nestedPos').textContent='位置：'+interjPosition(u,pieces,idx);
   const total=Math.max(0.001,u.end-u.start);
   const left=Math.max(0,Math.min(100,100*(p.start-u.start)/total)), width=Math.max(0.5,Math.min(100-left,100*(p.end-p.start)/total));
-  const bar=chip.querySelector('.nestedBar i'); if(bar){ bar.style.left=left+'%'; bar.style.width=width+'%'; }
+  repaintNestedBar(i,idx);
   updateRowScrubLayout(i);
 }
 function nudgePiece(i,idx,edge,dir,step,opt){
@@ -1190,9 +1199,10 @@ function rowScrubHtml(u,i){
   const total=Math.max(0.001,u.end-u.start);
   const ints=normalizedPieces(u).filter(p=>p.isInterjection);
   const whole=ints.length===1 && normalizedPieces(u).length===1;
-  const segs=whole?'':ints.map(p=>{
+  const allPieces=normalizedPieces(u);
+  const segs=whole?'':allPieces.map((p,idx)=>({p,idx})).filter(x=>x.p.isInterjection).map(({p,idx})=>{
     const l=Math.max(0,Math.min(100,100*(p.start-u.start)/total)), w=Math.max(0.8,Math.min(100-l,100*(p.end-p.start)/total));
-    return `<i class="rsInt" style="left:${l}%;width:${w}%" title="插话 ${escapeHtml((p.text||'').replace(/，$/,''))} ${fmtMs(p.start)}–${fmtMs(p.end)}"></i>`;
+    return `<i class="rsInt" data-i="${i}" data-idx="${idx}" style="left:${l}%;width:${w}%" title="插话 ${escapeHtml((p.text||'').replace(/，$/,''))} ${fmtMs(p.start)}–${fmtMs(p.end)}；点击：定位到它的卡片并试听"></i>`;
   }).join('');
   return `<div class="rowScrub" data-i="${i}" title="拖动或点击：从本句内任意位置开始听；拖到哪，按「按播放位置拆」就在哪拆">
     <button class="rsPlay" data-i="${i}" title="从当前位置播放 / 暂停；播到本句结尾自动停止">▶ 听本句</button>
@@ -1229,6 +1239,7 @@ function playRowFrom(i,t){
 }
 $('#list').addEventListener('pointerdown',e=>{
   const track=e.target.closest('.rsTrack'); if(!track) return;
+  if(e.target.closest('.rsInt')){ e.stopPropagation(); return; }
   e.preventDefault(); e.stopPropagation();
   const i=+track.dataset.i; const u=data.utterances[i]; if(!u) return;
   const wasPlaying=!audio.paused;
@@ -1286,6 +1297,114 @@ function updateRowScrubLayout(i){
   old.replaceWith(tmp.firstElementChild);
   paintRowScrub(i,audio.currentTime);
 }
+// ---------------- nested interjection: drag to move / resize ----------------
+function nestedWindow(u,p,fixed){
+  if(fixed) return fixed;
+  const len=Math.max(0.05,p.end-p.start);
+  const pad=Math.max(1.5,len*3);
+  let lo=Math.max(u.start,p.start-pad), hi=Math.min(u.end,p.end+pad);
+  if(hi-lo<0.5){ lo=Math.max(u.start,p.start-0.5); hi=Math.min(u.end,p.end+0.5); }
+  return {lo,hi};
+}
+function nestedBarInner(u,p,fixed){
+  const w=nestedWindow(u,p,fixed); const span=Math.max(0.001,w.hi-w.lo);
+  const l=100*(p.start-w.lo)/span, r=100*(p.end-w.lo)/span;
+  const edges=[];
+  if(u.start>=w.lo-0.001) edges.push(`<i class="nbEdge" style="left:calc(6px + (100% - 12px) * ${(100*(u.start-w.lo)/span)/100})" title="本句开始"></i>`);
+  if(u.end<=w.hi+0.001) edges.push(`<i class="nbEdge" style="left:calc(6px + (100% - 12px) * ${(100*(u.end-w.lo)/span)/100})" title="本句结束"></i>`);
+  return `<div class="nbWin"><div class="nbSeg" data-role="move" style="left:${l}%;width:${Math.max(0.5,r-l)}%"><span class="nbH l" data-role="l"></span><span class="nbH r" data-role="r"></span></div></div>${edges.join('')}`;
+}
+function repaintNestedBar(i,idx,fixed){
+  const u=data.utterances[i]; if(!u) return;
+  const p=pieceSorted(u)[idx]; if(!p) return;
+  const bar=document.querySelector(`#list .nestedBar[data-i="${i}"][data-idx="${idx}"]`); if(!bar) return;
+  const w=nestedWindow(u,p,fixed); const span=Math.max(0.001,w.hi-w.lo);
+  const seg=bar.querySelector('.nbSeg');
+  if(seg && fixed){
+    const l=100*(p.start-w.lo)/span, r=100*(p.end-w.lo)/span;
+    seg.style.left=Math.max(-5,l)+'%'; seg.style.width=Math.max(0.5,r-l)+'%';
+  }else{
+    bar.innerHTML=nestedBarInner(u,p,fixed);
+  }
+  const chip=bar.closest('.nestedChip');
+  const L=chip.querySelector('.nbL'), R=chip.querySelector('.nbR');
+  if(L) L.textContent=fmtMs(w.lo); if(R) R.textContent=fmtMs(w.hi);
+}
+let nDrag=null;
+$('#list').addEventListener('pointerdown',e=>{
+  const bar=e.target.closest('.nestedBar'); if(!bar) return;
+  e.preventDefault(); e.stopPropagation();
+  const i=+bar.dataset.i, idx=+bar.dataset.idx;
+  const u=data.utterances[i]; if(!u) return;
+  const ps=pieceSorted(u); const p=ps[idx]; if(!p||!p.isInterjection) return;
+  const role=e.target.closest('[data-role]')?.dataset.role||'blank';
+  const win=nestedWindow(u,p);
+  const win0=bar.querySelector('.nbWin').getBoundingClientRect();
+  if(role==='blank'){
+    const f=Math.max(0,Math.min(1,(e.clientX-win0.left)/Math.max(1,win0.width)));
+    const t=win.lo+f*(win.hi-win.lo);
+    stopPiecePlay(); audio.pause(); audio.currentTime=Math.max(u.start,Math.min(u.end,t));
+    setSyncStatus(`位置 ${fmtMs(audio.currentTime)}（距这段插话开始 ${(audio.currentTime-p.start).toFixed(2)} 秒）`);
+    return;
+  }
+  stopPiecePlay(); audio.pause();
+  nDrag={i,idx,role,bar,win,span:win.hi-win.lo,width:win0.width,x0:e.clientX,s0:p.start,e0:p.end,moved:false,id:e.pointerId};
+  bar.classList.add('dragging');
+  try{ bar.setPointerCapture(e.pointerId); }catch(_){}
+},true);
+$('#list').addEventListener('pointermove',e=>{
+  if(!nDrag) return;
+  const d=nDrag; const u=data.utterances[d.i]; if(!u) return;
+  const p=pieceSorted(u)[d.idx]; if(!p) return;
+  const dt=((e.clientX-d.x0)/Math.max(1,d.width))*d.span;
+  const MIN=0.05, snap=v=>Math.round(v*100)/100;
+  let s=d.s0, en=d.e0;
+  if(d.role==='move'){
+    const len=d.e0-d.s0;
+    s=snap(d.s0+dt); en=snap(s+len);
+    if(s<u.start){ s=u.start; en=round3(s+len); }
+    if(en>u.end){ en=u.end; s=round3(en-len); }
+  }else if(d.role==='l'){
+    s=snap(Math.max(u.start,Math.min(d.e0-MIN,d.s0+dt)));
+  }else{
+    en=snap(Math.min(u.end,Math.max(d.s0+MIN,d.e0+dt)));
+  }
+  if(s===p.start&&en===p.end) return;
+  if(!d.moved){ snapshot(); d.moved=true; }
+  p.start=round3(s); p.end=round3(en);
+  u.reviewed=false; if(u.speakerConfidence==='manual') u.speakerConfidence='low';
+  const chip=d.bar.closest('.nestedChip');
+  chip.querySelector('.pStart').textContent=fmtMs(p.start);
+  chip.querySelector('.pEnd').textContent=fmtMs(p.end);
+  chip.querySelector('.pDur').textContent=(p.end-p.start).toFixed(2);
+  chip.querySelector('.nestedPos').textContent='位置：'+interjPosition(u,normalizedPieces(u),d.idx);
+  repaintNestedBar(d.i,d.idx,d.win);
+  updateRowScrubLayout(d.i);
+  const edge=d.role==='l'?p.start:(d.role==='r'?p.end:p.start);
+  audio.currentTime=Math.max(u.start,Math.min(u.end,edge));
+});
+function nEnd(e){
+  if(!nDrag) return;
+  const d=nDrag; nDrag=null;
+  d.bar.classList.remove('dragging');
+  const u=data.utterances[d.i]; const p=u&&pieceSorted(u)[d.idx];
+  if(d.moved&&p){
+    persist(); refreshChip(d.i,d.idx); repaintNestedBar(d.i,d.idx);
+    setSyncStatus(`插话${d.role==='move'?'已移动':'已调整'}：${fmtMs(p.start)}–${fmtMs(p.end)}（时长 ${(p.end-p.start).toFixed(2)} 秒）。撤销一次即可还原`);
+    playPiece(d.i,d.idx);
+  }
+}
+$('#list').addEventListener('pointerup',nEnd);
+$('#list').addEventListener('pointercancel',nEnd);
+$('#list').addEventListener('click',e=>{
+  const seg=e.target.closest('.rsInt');
+  if(!seg) return;
+  e.stopPropagation();
+  const i=+seg.dataset.i, idx=+seg.dataset.idx;
+  const chip=document.querySelector(`#list .nestedChip[data-i="${i}"][data-idx="${idx}"]`);
+  if(chip){ chip.scrollIntoView({block:'nearest',behavior:'smooth'}); chip.classList.add('playing'); setTimeout(()=>chip.classList.remove('playing'),900); }
+  playPiece(i,idx);
+},true);
 function deleteRow(i){
   const u=data.utterances[i]; if(!u) return;
   const preview=(u.bodyText||u.text||'').replace(/\s+/g,' ').slice(0,30)||'（空）';
@@ -1617,7 +1736,8 @@ function nestedChips(u,i){
         <button class="unmarkInt" data-i="${i}" data-idx="${idx}" title="这其实不是插话：改回正文">改回正文</button>
       </div>
       <div class="nestedPos">位置：${interjPosition(u,pieces,idx)}</div>
-      <div class="nestedBar" title="整条 = 这一句的 ${fmtMs(u.start)} → ${fmtMs(u.end)}；橙色 = 插话所在时间段"><i style="left:${left}%;width:${width}%"></i></div>
+      <div class="nestedBar" data-i="${i}" data-idx="${idx}" title="拖中间 = 整段移动；拖两端 = 拉大/缩小；点空白处 = 从那里听。这是放大视图，只显示插话前后一小段">${nestedBarInner(u,p)}</div>
+      <div class="nbLegend"><span class="nbL">${fmtMs(nestedWindow(u,p).lo)}</span><span>放大视图 · 拖动调整</span><span class="nbR">${fmtMs(nestedWindow(u,p).hi)}</span></div>
       <div class="nestedTime">
         <span class="tm pStart">${fmtMs(p.start)}</span>
         <div class="nudge" title="只调整插话的【开始】时间（点一下 ±0.1 秒；长按越来越快；Shift 精细 ±0.02 秒）。不会超出本句范围"><span class="nudgeLab">始</span><button data-pnudge="-1" data-pedge="start" data-i="${i}" data-idx="${idx}">◀</button><button data-pnudge="1" data-pedge="start" data-i="${i}" data-idx="${idx}">▶</button></div>
