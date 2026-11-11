@@ -87,6 +87,16 @@ input[type=range].scrubbing{accent-color:var(--amber)}
 .nestedHead{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .nestedHead .nTxt{font-weight:600}
 .nestedPos{color:#7c2d12;font-size:10.5px;margin-top:3px}
+.rowScrub{display:flex;align-items:center;gap:8px;margin:5px 0 2px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:#f8fafc;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.rowScrub .rsPlay{font:inherit;font-size:11px;padding:1px 8px;border-radius:6px;border:1px solid #93b4ff;background:#fff;color:#16389c;cursor:pointer;flex:none}
+.rowScrub .rsPlay:hover{background:#eef4ff}
+.rsTrack{position:relative;flex:1;height:22px;min-width:120px;touch-action:none;cursor:ew-resize}
+.rsTrack .rsBase{position:absolute;left:0;right:0;top:9px;height:4px;border-radius:2px;background:#dbe3ee}
+.rsTrack .rsInt{position:absolute;top:6px;height:10px;border-radius:3px;background:#fb923c;opacity:.85;pointer-events:none}
+.rsTrack .rsDone{position:absolute;left:0;top:9px;height:4px;border-radius:2px;background:#3b6df0;pointer-events:none;width:0}
+.rsTrack .rsHead{position:absolute;top:2px;width:3px;height:18px;margin-left:-1px;border-radius:2px;background:#dc2626;pointer-events:none;left:0}
+.rsTime{flex:none;min-width:98px;text-align:right}
+.rowScrub.live{border-color:#93b4ff;background:#f5f8ff}
 .nestedBar{position:relative;height:8px;margin:5px 0 3px;border-radius:4px;background:#fde7cf;overflow:hidden}
 .nestedBar i{position:absolute;top:0;bottom:0;background:#ea580c;border-radius:4px;min-width:3px}
 .nestedBar b{position:absolute;top:0;bottom:0;width:1px;background:#fff;opacity:.9}
@@ -747,6 +757,7 @@ function buildRow(u,i){
       </div>
       <div>
         <textarea class="txt" data-i="${i}" rows="1" title="${u.hasInterjection?'父句完整区间：'+fmtMs(u.start)+' → '+fmtMs(u.end):''}">${escapeHtml(u.bodyText||u.text||'')}</textarea>
+        ${rowScrubHtml(u,i)}
         ${nestedChips(u,i)}
         <div class="candRow" data-i="${i}">${candButtons(u,i)}</div>
         <div class="tags" title="编辑操作">
@@ -765,7 +776,7 @@ function buildRow(u,i){
           ${TAGS.map(([k,label])=>`<button class="tagbtn ${u.tags.includes(k)?'on':''}" data-i="${i}" data-tag="${k}" title="${label}（${k}）">${k}</button>`).join('')}
         </div>
       </div>`;
-    row.addEventListener('click',e=>{if(e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='BUTTON')return; seekTo(i);});
+    row.addEventListener('click',e=>{if(e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='BUTTON'||e.target.closest('.rowScrub'))return; seekTo(i);});
     return row;
 }
 
@@ -1082,6 +1093,7 @@ function refreshChip(i,idx){
   const total=Math.max(0.001,u.end-u.start);
   const left=Math.max(0,Math.min(100,100*(p.start-u.start)/total)), width=Math.max(0.5,Math.min(100-left,100*(p.end-p.start)/total));
   const bar=chip.querySelector('.nestedBar i'); if(bar){ bar.style.left=left+'%'; bar.style.width=width+'%'; }
+  updateRowScrubLayout(i);
 }
 function nudgePiece(i,idx,edge,dir,step,opt){
   opt=opt||{};
@@ -1173,6 +1185,107 @@ function nestedChipClick(e){
   return false;
 }
 
+// ---------------- per-sentence scrubber ----------------
+function rowScrubHtml(u,i){
+  const total=Math.max(0.001,u.end-u.start);
+  const ints=normalizedPieces(u).filter(p=>p.isInterjection);
+  const whole=ints.length===1 && normalizedPieces(u).length===1;
+  const segs=whole?'':ints.map(p=>{
+    const l=Math.max(0,Math.min(100,100*(p.start-u.start)/total)), w=Math.max(0.8,Math.min(100-l,100*(p.end-p.start)/total));
+    return `<i class="rsInt" style="left:${l}%;width:${w}%" title="插话 ${escapeHtml((p.text||'').replace(/，$/,''))} ${fmtMs(p.start)}–${fmtMs(p.end)}"></i>`;
+  }).join('');
+  return `<div class="rowScrub" data-i="${i}" title="拖动或点击：从本句内任意位置开始听；拖到哪，按「按播放位置拆」就在哪拆">
+    <button class="rsPlay" data-i="${i}" title="从当前位置播放 / 暂停；播到本句结尾自动停止">▶ 听本句</button>
+    <div class="rsTrack" data-i="${i}"><div class="rsBase"></div><div class="rsDone"></div>${segs}<div class="rsHead"></div></div>
+    <span class="rsTime"><span class="rsNow">0.00</span> / ${total.toFixed(2)} 秒</span>
+  </div>`;
+}
+let rsDrag=null, rsLimit=null;
+function rowOf(i){ return document.querySelector(`#list .row[data-i="${i}"]`); }
+function paintRowScrub(i,t){
+  const u=data.utterances[i]; const row=rowOf(i); if(!u||!row) return;
+  const box=row.querySelector('.rowScrub'); if(!box) return;
+  const total=Math.max(0.001,u.end-u.start);
+  const rel=Math.max(0,Math.min(total,t-u.start)), pct=100*rel/total;
+  const head=box.querySelector('.rsHead'), done=box.querySelector('.rsDone');
+  if(head) head.style.left=pct+'%';
+  if(done) done.style.width=pct+'%';
+  const now=box.querySelector('.rsNow'); if(now) now.textContent=rel.toFixed(2);
+  box.classList.toggle('live',!audio.paused||rsDrag?.i===i);
+}
+function scrubTimeFromEvent(track,e,u){
+  const r=track.getBoundingClientRect();
+  const f=Math.max(0,Math.min(1,(e.clientX-r.left)/Math.max(1,r.width)));
+  return round3(u.start+f*(u.end-u.start));
+}
+function playRowFrom(i,t){
+  const u=data.utterances[i]; if(!u) return;
+  stopPiecePlay();
+  rsLimit={i,end:u.end};
+  active=i;
+  document.querySelectorAll('.row').forEach(r=>r.classList.toggle('active',+r.dataset.i===i));
+  audio.currentTime=Math.max(u.start,Math.min(u.end-0.02,t));
+  audio.play().catch(()=>{});
+}
+$('#list').addEventListener('pointerdown',e=>{
+  const track=e.target.closest('.rsTrack'); if(!track) return;
+  e.preventDefault(); e.stopPropagation();
+  const i=+track.dataset.i; const u=data.utterances[i]; if(!u) return;
+  const wasPlaying=!audio.paused;
+  stopPiecePlay();
+  rsDrag={i,track,wasPlaying};
+  active=i;
+  document.querySelectorAll('.row').forEach(r=>r.classList.toggle('active',+r.dataset.i===i));
+  if(wasPlaying) audio.pause();
+  const t=scrubTimeFromEvent(track,e,u);
+  audio.currentTime=t; paintRowScrub(i,t);
+  try{ track.setPointerCapture(e.pointerId); }catch(_){}
+},true);
+$('#list').addEventListener('pointermove',e=>{
+  if(!rsDrag) return;
+  const u=data.utterances[rsDrag.i]; if(!u) return;
+  const t=scrubTimeFromEvent(rsDrag.track,e,u);
+  audio.currentTime=t; paintRowScrub(rsDrag.i,t);
+});
+function rsEnd(e){
+  if(!rsDrag) return;
+  const st=rsDrag; rsDrag=null;
+  const u=data.utterances[st.i];
+  if(u){
+    const t=audio.currentTime;
+    paintRowScrub(st.i,t);
+    setSyncStatus(`本句位置 ${fmtMs(t)}（距句首 ${(t-u.start).toFixed(2)} 秒）。点「按播放位置拆」(T) 可在此处拆分`);
+    if(st.wasPlaying) playRowFrom(st.i,t);
+  }
+}
+$('#list').addEventListener('pointerup',rsEnd);
+$('#list').addEventListener('pointercancel',rsEnd);
+$('#list').addEventListener('click',e=>{
+  const b=e.target.closest('.rsPlay'); if(!b) return;
+  e.stopPropagation();
+  const i=+b.dataset.i; const u=data.utterances[i]; if(!u) return;
+  const inside=active===i && audio.currentTime>=u.start-0.01 && audio.currentTime<u.end-0.02;
+  if(!audio.paused && inside){ audio.pause(); rsLimit=null; return; }
+  playRowFrom(i,inside?audio.currentTime:u.start);
+},true);
+audio.addEventListener('timeupdate',()=>{
+  if(!data||active<0) return;
+  if(rsLimit && audio.currentTime>=rsLimit.end){
+    audio.pause(); rsLimit=null;
+    const u=data.utterances[active]; if(u) audio.currentTime=u.end;
+  }
+  paintRowScrub(active,audio.currentTime);
+});
+audio.addEventListener('pause',()=>{ if(rsLimit && audio.ended) rsLimit=null; if(active>=0) paintRowScrub(active,audio.currentTime); });
+audio.addEventListener('play',()=>{ if(active>=0) paintRowScrub(active,audio.currentTime); });
+audio.addEventListener('seeking',()=>{ if(rsLimit && !rsDrag){ const u=data.utterances[rsLimit.i]; if(u && (audio.currentTime<u.start-0.05||audio.currentTime>u.end+0.05)) rsLimit=null; } });
+function updateRowScrubLayout(i){
+  const u=data.utterances[i]; const row=rowOf(i); if(!u||!row) return;
+  const old=row.querySelector('.rowScrub'); if(!old) return;
+  const tmp=document.createElement('div'); tmp.innerHTML=rowScrubHtml(u,i);
+  old.replaceWith(tmp.firstElementChild);
+  paintRowScrub(i,audio.currentTime);
+}
 function deleteRow(i){
   const u=data.utterances[i]; if(!u) return;
   const preview=(u.bodyText||u.text||'').replace(/\s+/g,' ').slice(0,30)||'（空）';
