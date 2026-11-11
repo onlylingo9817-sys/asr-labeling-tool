@@ -87,7 +87,7 @@ input[type=range].scrubbing{accent-color:var(--amber)}
 .nestedHead{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .nestedHead .nTxt{font-weight:600}
 .nestedPos{color:#7c2d12;font-size:10.5px;margin-top:3px}
-.rowScrub{display:flex;align-items:center;gap:8px;margin:5px 0 2px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:#f8fafc;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.rowScrub{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:5px 0 2px;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:#f8fafc;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
 .rowScrub .rsPlay{font:inherit;font-size:11px;padding:1px 8px;border-radius:6px;border:1px solid #93b4ff;background:#fff;color:#16389c;cursor:pointer;flex:none}
 .rowScrub .rsPlay:hover{background:#eef4ff}
 .rsTrack{position:relative;flex:1;height:22px;min-width:120px;touch-action:none;cursor:ew-resize}
@@ -99,8 +99,12 @@ input[type=range].scrubbing{accent-color:var(--amber)}
 .rsTrack .rsInt .rsH.l{left:-2px}
 .rsTrack .rsInt .rsH.r{right:-2px}
 .rsTrack .rsDone{position:absolute;left:0;top:9px;height:4px;border-radius:2px;background:#3b6df0;pointer-events:none;width:0}
+.rsTrack .rsGap{position:absolute;top:8px;height:6px;border-radius:3px;background:repeating-linear-gradient(135deg,#cbd5e1 0 3px,#e2e8f0 3px 6px);pointer-events:none}
 .rsTrack .rsHead{position:absolute;top:2px;width:3px;height:18px;margin-left:-1px;border-radius:2px;background:#dc2626;pointer-events:none;left:0}
 .rsTime{flex:none;min-width:98px;text-align:right}
+.rsGapNote{flex:0 0 100%;font-size:10.5px;color:#64748b}
+.rsGapNote button{font:inherit;font-size:10.5px;padding:0 6px;border-radius:6px;border:1px solid #94a3b8;background:#fff;color:#475569;cursor:pointer;margin-left:4px}
+.rsGapNote button:hover{background:#f1f5f9}
 .rowScrub.live{border-color:#93b4ff;background:#f5f8ff}
 .nestedBar{position:relative;height:30px;margin:6px 0 3px;border-radius:6px;background:#fde7cf;overflow:hidden;touch-action:none;user-select:none}
 .nestedBar .nbWin{position:absolute;left:6px;right:6px;top:0;bottom:0}
@@ -135,6 +139,15 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
 .conf.medium{color:var(--amber)}
 .txt{border:0;background:transparent;font:inherit;width:100%;resize:vertical;min-height:28px;padding:3px 2px;line-height:1.5}
 .txt:focus{outline:2px solid #c7d5ff;border-radius:4px;background:#fff}
+.txtWrap{position:relative}
+.txtWrap .txt{position:relative;z-index:1}
+.txtMirror{position:absolute;left:0;top:0;right:0;z-index:0;pointer-events:none;border:0;padding:3px 2px;font:inherit;line-height:1.5;white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;color:transparent;overflow:hidden}
+.txtMirror .tPlayed{background:#dbe7ff;border-radius:3px}
+.txtMirror .tNow{background:#93b4ff;border-radius:3px;box-shadow:0 0 0 1px #5b8def}
+.txtWrap .txt:focus{background:transparent}
+.txtWrap.followOff .txtMirror{display:none}
+.followBar{display:flex;align-items:center;gap:6px;font-size:10.5px;color:#94a3b8;margin:1px 0 2px}
+.followBar label{display:inline-flex;align-items:center;gap:3px;cursor:pointer}
 .tags{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}
 .tagbtn{font-size:11px;color:var(--muted);padding:2px 7px}
 .tagbtn.on{background:#fff4e5;border-color:#f0c48a;color:#8a4b0f}
@@ -260,6 +273,9 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
       <div class="sub" style="margin-top:4px">默认只合并「说话人相同、已标好、不含插话、不是很短的句子」。要对未标说话人的录音合并，请勾选「允许合并 UNKNOWN」。</div>
     </div></details>
   <label class="autoMergeWrap" title="拆分后，自动把两句边界上没有人声的静音/空白时间段裁掉（读取音频能量判断，最多处理这一句的首尾，不会动句子中间）"><input type="checkbox" id="trimSilence" checked> 拆分后去静音</label>
+  <button id="trimAll" title="对当前录音的所有句子，把头尾没有人声的空白裁掉（读取音频能量判断）。已人工确认的句子默认不动。句子中间的长静音不会裁，只在进度条上标灰并列出来，由你决定是否拆分。可撤销">✂ 去空白音</button>
+  <label class="autoMergeWrap" title="头尾空白超过这个秒数才裁（0.1–5 秒）；留白固定保留 0.05 秒"><input type="number" id="trimMin" min="0.1" max="5" step="0.1" value="0.3" style="width:52px;font:inherit;border:1px solid var(--line);border-radius:6px;padding:3px 4px"> 秒</label>
+  <label class="autoMergeWrap" title="连同已「人工确认」的句子一起处理"><input type="checkbox" id="trimConfirmed"> 含已确认</label>
   <button id="foldInterj" title="把紧贴正文的语气词（哎、啊、嗯…）并回同一句：句首/句尾间隔小于 0.6 秒、句中两侧间隔小于 0.3 秒的会并回；已人工确认的句子和已单独指定说话人的插话不动。可撤销">⤾ 并回紧贴语气词</button>
   <button id="undo" title="撤销最近一步编辑（⌘Z）">↶ 撤销一步</button>
   <button id="redo" title="重做最近一次撤销（⇧⌘Z）">↷ 重做一步</button>
@@ -308,7 +324,7 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
             <option value="2">2×</option>
           </select>
         </label>
-        <button id="loop" class="ghost" title="循环播放当前句（L）">🔁 单句循环</button>
+        <label class="followBar" title="播放时，把正在读到的字在文本框里标出来（已读部分浅蓝，当前字深蓝）。每个字的时间是按字数在这一段里平均估算的，不是逐字对齐，仅供参考"><input type="checkbox" id="followText" checked> 字跟随播放</label> <button id="loop" class="ghost" title="循环播放当前句（L）">🔁 单句循环</button>
         <span class="time" id="time">00:00 / 02:30</span>
         <input type="range" id="seek" min="0" max="150" step="0.01" value="0">
       </div>
@@ -752,7 +768,7 @@ function refreshRow(i){
   const fresh=buildRow(u,i);
   old.replaceWith(fresh);
   const box=fresh.querySelector('.txt');
-  if(box){ box.style.height='auto'; box.style.height=Math.max(28,box.scrollHeight)+'px'; }
+  if(box){ box.style.height='auto'; box.style.height=Math.max(28,box.scrollHeight)+'px'; const m=box.parentElement?.querySelector('.txtMirror'); if(m) m.style.height=box.style.height; }
   renderFilters(); updateSide();
 }
 function buildRow(u,i){
@@ -770,7 +786,7 @@ function buildRow(u,i){
         ${tagCount(u)?`<span class="conf">标签: ${u.tags.join(', ')}</span>`:''}
       </div>
       <div>
-        <textarea class="txt" data-i="${i}" rows="1" title="${u.hasInterjection?'父句完整区间：'+fmtMs(u.start)+' → '+fmtMs(u.end):''}">${escapeHtml(u.bodyText||u.text||'')}</textarea>
+        <div class="txtWrap"><div class="txtMirror" data-i="${i}" aria-hidden="true">${escapeHtml(u.bodyText||u.text||'')}</div><textarea class="txt" data-i="${i}" rows="1" title="${u.hasInterjection?'父句完整区间：'+fmtMs(u.start)+' → '+fmtMs(u.end):''}">${escapeHtml(u.bodyText||u.text||'')}</textarea></div>
         ${rowScrubHtml(u,i)}
         ${nestedChips(u,i)}
         <div class="candRow" data-i="${i}">${candButtons(u,i)}</div>
@@ -1200,6 +1216,11 @@ function nestedChipClick(e){
 }
 
 // ---------------- per-sentence scrubber ----------------
+function gapsFor(u){
+  const g=(window._gapMap||{})[data?.taskId];
+  if(!g) return [];
+  return g.filter(x=>x.from>=u.start-0.01&&x.to<=u.end+0.01);
+}
 function rowScrubHtml(u,i){
   const total=Math.max(0.001,u.end-u.start);
   const ints=normalizedPieces(u).filter(p=>p.isInterjection);
@@ -1209,9 +1230,15 @@ function rowScrubHtml(u,i){
     const l=Math.max(0,Math.min(100,100*(p.start-u.start)/total)), w=Math.max(0.8,Math.min(100-l,100*(p.end-p.start)/total));
     return `<i class="rsInt" data-i="${i}" data-idx="${idx}" style="left:${l}%;width:${w}%" title="插话 ${escapeHtml((p.text||'').replace(/，$/,''))} ${fmtMs(p.start)}–${fmtMs(p.end)}；拖动 = 整段移动，拖两端 = 拉长/缩短，点一下 = 定位卡片并试听"><b class="rsH l" data-h="l"></b><b class="rsH r" data-h="r"></b></i>`;
   }).join('');
+  const gaps=gapsFor(u).map(g=>{
+    const l=Math.max(0,Math.min(100,100*(g.from-u.start)/total)), w=Math.max(0.6,Math.min(100-l,100*(g.to-g.from)/total));
+    return `<i class="rsGap" style="left:${l}%;width:${w}%" title="这里 ${(g.to-g.from).toFixed(1)} 秒没有声音（${fmtMs(g.from)}–${fmtMs(g.to)}）"></i>`;
+  }).join('');
+  const gapNote=gapsFor(u).length?`<div class="rsGapNote">灰色斜纹 = 句子中间没有声音的时间（${gapsFor(u).map(g=>(g.to-g.from).toFixed(1)+'秒').join('、')}）<button data-i="${i}" class="gapSplit" title="在这段空白处把这一句拆成两句，并裁掉中间的空白（左半的结尾、右半的开头都去掉空白）。文字按这段空白前后各自的时间分配，拆完请核对">在空白处拆开</button></div>`:'';
   return `<div class="rowScrub" data-i="${i}" title="拖动或点击：从本句内任意位置开始听；拖到哪，按「按播放位置拆」就在哪拆">
+    ${gapNote}
     <button class="rsPlay" data-i="${i}" title="从当前位置播放 / 暂停；播到本句结尾自动停止">▶ 听本句</button>
-    <div class="rsTrack" data-i="${i}"><div class="rsBase"></div><div class="rsDone"></div>${segs}<div class="rsHead"></div></div>
+    <div class="rsTrack" data-i="${i}"><div class="rsBase"></div>${gaps}<div class="rsDone"></div>${segs}<div class="rsHead"></div></div>
     <span class="rsTime"><span class="rsNow">0.00</span> / ${total.toFixed(2)} 秒</span>
   </div>`;
 }
@@ -1464,6 +1491,212 @@ $('#list').addEventListener('pointermove',segDragMove);
 $('#list').addEventListener('pointerup',segDragEnd);
 $('#list').addEventListener('pointercancel',segDragEnd);
 
+// ---------------- follow-along text highlight ----------------
+// The audio only gives us start/end per body piece, not per character, so the
+// character under the playhead is ESTIMATED by spreading each piece's text
+// evenly over its time span (punctuation is not counted as time).
+const PUNCT_RE=/[，,。.！!？?；;：:、\s]/;
+function followEnabled(){ return localStorage.getItem('asr-follow')!=='0'; }
+function bodyCharTimeline(u){
+  // list of {from,to,t0,t1} over the text-box string, one per body piece
+  const body=u.bodyText||u.text||'';
+  const pieces=alignBodyPieces(normalizedPieces(u),body).filter(p=>!p.isInterjection);
+  const out=[]; let pos=0;
+  for(const p of pieces){
+    const t=p.text||'';
+    const at=body.indexOf(t,pos);
+    const from=at>=0?at:pos;
+    out.push({from,to:from+t.length,t0:p.start,t1:p.end,text:t});
+    pos=from+t.length;
+  }
+  return {body,out};
+}
+function charIndexAt(u,time){
+  const {body,out}=bodyCharTimeline(u);
+  if(!out.length) return {body,idx:-1};
+  let last=-1, found=-1;
+  for(const seg of out){
+    if(time<seg.t0){ break; }
+    // number of non-punctuation chars in this piece and how many are "spoken" by now
+    const chars=[...seg.text].map((c,k)=>({c,k})).filter(x=>!PUNCT_RE.test(x.c));
+    if(!chars.length){ last=seg.to-1; continue; }
+    const f=Math.max(0,Math.min(0.999,(time-seg.t0)/Math.max(0.001,seg.t1-seg.t0)));
+    const nth=Math.min(chars.length-1,Math.floor(f*chars.length));
+    if(time>=seg.t1){ last=seg.to-1; found=-1; continue; }
+    found=seg.from+chars[nth].k; last=found; break;
+  }
+  return {body,idx:last};
+}
+function paintFollow(i,time){
+  const u=data.utterances[i]; if(!u) return;
+  const mir=document.querySelector(`#list .txtMirror[data-i="${i}"]`); if(!mir) return;
+  const wrap=mir.parentElement;
+  if(!followEnabled()||time<u.start||time>=u.end+0.05){ if(mir.dataset.f){ mir.textContent=mir.dataset.body||''; mir.dataset.f=''; } return; }
+  const {body,idx}=charIndexAt(u,time);
+  const key=idx+'|'+body.length;
+  if(mir.dataset.f===key && mir.dataset.body===body) return;
+  mir.dataset.f=key; mir.dataset.body=body;
+  if(idx<0){ mir.textContent=body; return; }
+  const chars=[...body];
+  let nowAt=idx;
+  const before=chars.slice(0,nowAt).join(''), now=chars[nowAt]||'', after=chars.slice(nowAt+1).join('');
+  mir.innerHTML=`<span class="tPlayed">${escapeHtml(before)}</span><span class="tNow">${escapeHtml(now)}</span>${escapeHtml(after)}`;
+}
+function clearFollow(){
+  document.querySelectorAll('#list .txtMirror').forEach(m=>{ if(m.dataset.f){ m.textContent=m.dataset.body||m.textContent; m.dataset.f=''; } });
+}
+audio.addEventListener('timeupdate',()=>{ if(data&&active>=0) paintFollow(active,audio.currentTime); });
+audio.addEventListener('seeked',()=>{ if(data&&active>=0) paintFollow(active,audio.currentTime); });
+audio.addEventListener('pause',()=>{ if(data&&active>=0) paintFollow(active,audio.currentTime); });
+function syncMirrorText(ta){
+  const mir=ta.parentElement?.querySelector('.txtMirror'); if(!mir) return;
+  mir.dataset.f=''; mir.dataset.body=ta.value; mir.textContent=ta.value;
+  mir.style.height=ta.style.height||(ta.scrollHeight+'px');
+}
+
+// ---------------- trim empty audio from every sentence ----------------
+function trimMinSec(){ const v=parseFloat($('#trimMin')?.value); return Number.isFinite(v)?Math.min(5,Math.max(0.1,v)):0.3; }
+async function readWholeAudio(onProgress){
+  const res=await fetch(data.audio);
+  if(!res.ok) throw new Error('音频读取失败 HTTP '+res.status);
+  const buf=await res.arrayBuffer();
+  const n=Math.floor((buf.byteLength-WAV_HEADER)/2);
+  if(n<=0) throw new Error('音频不是预期的 16kHz WAV');
+  return new Int16Array(buf.slice(WAV_HEADER,WAV_HEADER+n*2));
+}
+function energiesOf(samples,rate=16000,frame=0.02){
+  const size=Math.round(rate*frame), n=Math.floor(samples.length/size), out=new Float32Array(n);
+  for(let f=0;f<n;f++){ let sum=0; const o=f*size; for(let k=0;k<size;k++){ const v=samples[o+k]/32768; sum+=v*v; } out[f]=Math.sqrt(sum/size); }
+  return out;
+}
+function silenceThreshold(e){
+  // Noise floor of THIS recording: 90th percentile of the quietest half of all frames,
+  // never below 0.0015 and never above 0.004, so a loud sentence cannot raise the bar
+  // and swallow quiet speech or breathy sentence endings.
+  const sorted=Float32Array.from(e).sort();
+  const low=sorted[Math.floor(sorted.length*0.45)]||0;
+  return Math.min(0.004,Math.max(0.0015,low*3));
+}
+function analyseRow(e,u,minGap,thr,frame=0.02){
+  const lo=Math.max(0,Math.floor((u.start-0.3)/frame)), hi=Math.min(e.length,Math.ceil((u.end+0.3)/frame));
+  const w=Array.from(e.subarray(lo,hi)); if(w.length<5) return null;
+  const fs=Math.max(0,Math.floor(u.start/frame)-lo), fe=Math.min(w.length-1,Math.ceil(u.end/frame)-lo);
+  let first=-1,last=-1;
+  for(let f=fs;f<=fe;f++){ if(w[f]>=thr){ if(first<0) first=f; last=f; } }
+  if(first<0) return {silent:true,start:u.start,end:u.end};   // the whole sentence is silent
+  const voicedStart=(lo+first)*frame, voicedEnd=(lo+last+1)*frame;
+  const gaps=[]; let run=0, from=0;
+  for(let f=first;f<=last;f++){
+    if(w[f]<thr){ if(!run) from=f; run++; }
+    else{ if(run*frame>=minGap) gaps.push({from:(lo+from)*frame,to:(lo+f)*frame}); run=0; }
+  }
+  return {silent:false,voicedStart,voicedEnd,gaps};
+}
+let trimAllBusy=false;
+async function trimAllRows(){
+  if(!data||!data.taskId){ alert('请先选择一条录音。'); return; }
+  if(trimAllBusy) return;
+  trimAllBusy=true;
+  const btn=$('#trimAll'), old=btn.textContent; btn.disabled=true; btn.textContent='分析中…';
+  try{
+    flushPersist();
+    setSyncStatus('正在读取整条录音并分析每句的头尾…');
+    const samples=await readWholeAudio();
+    const e=energiesOf(samples);
+    const thr=silenceThreshold(e);
+    const minTrim=trimMinSec(), keep=0.05, withConfirmed=!!$('#trimConfirmed')?.checked;
+    window._gapMap=window._gapMap||{};
+    const plan=[]; let skippedConfirmed=0, silentRows=0, unreadable=0; const longGaps=[], textInSilence=[];
+    data.utterances.forEach((u,i)=>{
+      if(isConfirmed(u)&&!withConfirmed){ skippedConfirmed++; return; }
+      const r=analyseRow(e,u,2,thr);
+      if(!r){ unreadable++; return; }
+      if(r.silent){ silentRows++; return; }
+      const ns=Math.max(u.start,round3(r.voicedStart-keep)), ne=Math.min(u.end,round3(r.voicedEnd+keep));
+      const cutHead=round3(ns-u.start), cutTail=round3(u.end-ne);
+      const doHead=cutHead>=minTrim, doTail=cutTail>=minTrim;
+      const newS=doHead?ns:u.start, newE=doTail?ne:u.end;
+      if((doHead||doTail) && newE-newS>=0.1){
+        // never throw text away silently: if a spoken (non-interjection) piece would fall
+        // completely inside the cut part, this sentence is left alone and reported.
+        const lost=(u.pieces||[]).filter(p=>!p.isInterjection && (p.text||'').replace(PUNCT_RE,'').length && (p.end<=newS+0.001 || p.start>=newE-0.001));
+        if(lost.length){ textInSilence.push({i,text:lost.map(p=>p.text).join('')}); }
+        else plan.push({i,u,ns:newS,ne:newE,cutHead:doHead?cutHead:0,cutTail:doTail?cutTail:0});
+      }
+      r.gaps.forEach(g=>longGaps.push({i,from:g.from,to:g.to}));
+    });
+    window._gapMap[data.taskId]=longGaps.map(g=>({from:g.from,to:g.to}));
+    if(!plan.length){
+      const msg=`没有头尾空白超过 ${minTrim} 秒的句子（已检查 ${data.utterances.length-skippedConfirmed} 句${skippedConfirmed?`，跳过已确认 ${skippedConfirmed} 句`:''}）。`;
+      render(); setSyncStatus(msg+(longGaps.length?` 另有 ${longGaps.length} 处句内长静音。`:'')); alert(msg+(longGaps.length?`\n\n句子中间有 ${longGaps.length} 处超过 2 秒的静音，请在列表里自行判断是否拆分。`:'')); return;
+    }
+    const total=plan.reduce((n,x)=>n+x.cutHead+x.cutTail,0);
+    const big=plan.filter(x=>x.cutHead>=1||x.cutTail>=1).length;
+    const lines=[`将裁掉 ${plan.length} 句的头尾空白，共 ${total.toFixed(1)} 秒（头尾空白≥${minTrim} 秒才裁，保留 ${keep} 秒留白；静音判定能量 ${thr.toFixed(4)}）。`];
+    if(big) lines.push(`其中 ${big} 句要裁掉 1 秒以上。`);
+    if(skippedConfirmed) lines.push(`已跳过已人工确认的 ${skippedConfirmed} 句（勾选「含已确认」可一并处理）。`);
+    if(silentRows) lines.push(`${silentRows} 句整句几乎没有声音，不处理，请自行判断是否删除。`);
+    if(textInSilence.length) lines.push(`${textInSilence.length} 句的文字落在了空白里（可能是 ASR 对静音误识别），为避免丢字没有裁剪，请自行核对：${textInSilence.slice(0,4).map(x=>fmtMs(data.utterances[x.i].start)+'“'+x.text.slice(0,8)+'”').join('、')}${textInSilence.length>4?' 等':''}。`);
+    if(longGaps.length) lines.push(`${longGaps.length} 处句子中间有超过 2 秒的静音，不会裁剪，请自行判断是否拆分。`);
+    lines.push('只改起止时间，不改文字、说话人和标签；可撤销（⌘Z）。继续？');
+    if(!confirm(lines.join('\n'))){ setSyncStatus('已取消，没有改动'); return; }
+    snapshot();
+    plan.forEach(({u,ns,ne})=>{
+      u.start=ns; u.end=ne;
+      if(u.pieces&&u.pieces.length){
+        u.pieces.forEach(p=>{ p.start=Math.max(p.start,ns); p.end=Math.min(p.end,ne); });
+        u.pieces=u.pieces.filter(p=>p.end-p.start>0.005);
+        if(!u.pieces.length) u.pieces=[{text:u.text||u.bodyText||'',start:ns,end:ne,isInterjection:false,speaker:u.speaker}];
+      }
+    });
+    persist(); render(); renderFilters(); updateSide();
+    setSyncStatus(`已裁掉 ${plan.length} 句的头尾空白，共 ${total.toFixed(1)} 秒。不对可撤销（⌘Z）`);
+  }catch(err){ setSyncStatus('去空白失败：'+err.message,true); alert('去空白失败：'+err.message); }
+  finally{ trimAllBusy=false; btn.disabled=false; btn.textContent=old; }
+}
+$('#trimAll').addEventListener('click',trimAllRows);
+function splitAtGap(i){
+  const u=data.utterances[i]; if(!u) return;
+  const gaps=gapsFor(u).sort((a,b)=>(b.to-b.from)-(a.to-a.from));
+  if(!gaps.length){ setSyncStatus('这一句里没有标出的空白',true); return; }
+  const g=gaps[0];
+  const keep=0.05;
+  const leftEnd=round3(Math.max(u.start+0.05,g.from+keep)), rightStart=round3(Math.min(u.end-0.05,g.to-keep));
+  if(!(rightStart>leftEnd+0.2)){ setSyncStatus('空白太短，无法拆开',true); return; }
+  const body=u.bodyText||u.text||'';
+  const pieces=alignBodyPieces(normalizedPieces(u),body).map(p=>({...p}));
+  const leftPieces=[], rightPieces=[];
+  let seen=0; const total=pieces.filter(p=>!p.isInterjection).reduce((n,p)=>n+Math.max(0,(p.text||'').length),0);
+  for(const p of pieces){
+    if(p.isInterjection){ (p.end<=leftEnd+0.001?leftPieces:rightPieces).push(p); continue; }
+    if(p.end<=leftEnd+0.001){ leftPieces.push(p); continue; }
+    if(p.start>=rightStart-0.001){ rightPieces.push(p); continue; }
+    const len=(p.text||'').length;
+    const frac=Math.max(0,Math.min(1,(g.from-p.start)/Math.max(0.001,p.end-p.start)));
+    const at=Math.max(0,Math.min(len,Math.round(len*frac)));
+    const lt=(p.text||'').slice(0,at), rt=(p.text||'').slice(at);
+    if(lt.trim()) leftPieces.push({...p,text:lt,end:Math.min(p.end,leftEnd)});
+    if(rt.trim()) rightPieces.push({...p,text:rt,start:Math.max(p.start,rightStart)});
+  }
+  if(!leftPieces.length||!rightPieces.length){ setSyncStatus('这一处空白在句首或句尾，请用「✂ 去空白音」裁掉',true); return; }
+  snapshot();
+  const mk=(ps,start,end)=>{
+    const text=ps.map(p=>p.text||'').join('');
+    return {...u,id:u.id,start,end,text,bodyText:ps.filter(p=>!p.isInterjection).map(p=>p.text||'').join('')||text,pieces:ps,
+      hasInterjection:ps.some(p=>p.isInterjection),isInterjection:ps.every(p=>p.isInterjection),
+      reviewed:false,speakerConfidence:u.speakerConfidence==='manual'?'low':u.speakerConfidence,displayLabel:'空白处拆分·请核对'};
+  };
+  const a=mk(leftPieces,u.start,leftEnd), b=mk(rightPieces,rightStart,u.end);
+  const map=window._gapMap||{}; const all=map[data.taskId]||[];
+  map[data.taskId]=all.filter(x=>!(Math.abs(x.from-g.from)<0.001&&Math.abs(x.to-g.to)<0.001));
+  data.utterances.splice(i,1,a,b);
+  persist(); render(); renderFilters(); seekTo(i);
+  setSyncStatus(`已在空白处拆开：${fmtMs(a.start)}–${fmtMs(a.end)} 与 ${fmtMs(b.start)}–${fmtMs(b.end)}，中间 ${(rightStart-leftEnd).toFixed(1)} 秒空白已去掉。文字按时间比例分配，请核对。可撤销（⌘Z）`);
+}
+$('#list').addEventListener('click',e=>{
+  const b=e.target.closest('.gapSplit'); if(!b) return;
+  e.stopPropagation(); splitAtGap(+b.dataset.i);
+},true);
 function deleteRow(i){
   const u=data.utterances[i]; if(!u) return;
   const preview=(u.bodyText||u.text||'').replace(/\s+/g,' ').slice(0,30)||'（空）';
@@ -1818,7 +2051,7 @@ function nestedChips(u,i){
     </span>`;}).join('')}</div>`;
 }
 function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function autoGrowAll(){document.querySelectorAll('.txt').forEach(t=>{t.style.height='auto';t.style.height=Math.max(28,t.scrollHeight)+'px';});}
+function autoGrowAll(){document.querySelectorAll('.txt').forEach(t=>{t.style.height='auto';t.style.height=Math.max(28,t.scrollHeight)+'px';const m=t.parentElement?.querySelector('.txtMirror'); if(m) m.style.height=t.style.height;});}
 function clearHistory(){undoStack.length=0;redoStack.length=0;updateHistoryButtons();}
 function snapshot(){
   if(!data) return;
@@ -1909,6 +2142,11 @@ function toggleLoop(){
   $('#miniLoop').textContent=loopSentence?'🔁 循环中':'🔁';
 }
 $('#loop').addEventListener('click',toggleLoop);
+const followBox=$('#followText');
+if(followBox){
+  followBox.checked=followEnabled();
+  followBox.addEventListener('change',()=>{ localStorage.setItem('asr-follow',followBox.checked?'1':'0'); if(followBox.checked){ if(data&&active>=0) paintFollow(active,audio.currentTime); } else clearFollow(); });
+}
 // keep the current sentence looping
 audio.addEventListener('timeupdate',()=>{
   if(!loopSentence||active<0||!data) return;
@@ -2209,6 +2447,7 @@ $('#list').addEventListener('input',e=>{
   }
   // The visible textarea is the body only. Nested interjections stay separate.
   u.bodyText=e.target.value;
+  syncMirrorText(e.target);
   const pieces=normalizedPieces(u);
   const body=[...pieces].filter(p=>!p.isInterjection);
   if(body.length===1){ body[0].text=e.target.value; }
