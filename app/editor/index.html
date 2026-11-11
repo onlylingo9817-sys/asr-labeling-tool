@@ -230,6 +230,8 @@ select.customer{background:#e9f8ed;border-color:#b6e3c2;color:#12612c}
   <button id="redo" title="重做最近一次撤销（⇧⌘Z）">↷ 重做一步</button>
   <button id="resetDraft" title="清除当前录音的全部本地改动，回到 ASR 初始底稿">⟲ 重置为底稿</button>
   <button id="export">导出 Label Studio JSON</button>
+  <button id="importJson" title="把 Label Studio 导出的 JSON（或本工具导出的 JSON、重置时的草稿备份）读进当前录音，先预览条数再确认；可撤销">⇥ 导入 JSON</button>
+  <input type="file" id="importFile" accept=".json,application/json" hidden>
 
   <div class="minibar" id="minibar" hidden>
     <button id="miniPlay" title="播放/暂停（Space）">▶</button>
@@ -1891,26 +1893,172 @@ document.addEventListener('keydown',e=>{
     persist(); refreshRow(active); seekTo(active+1);
   }
 });
+
+// ---------------- import JSON ----------------
+// Accepts: Label Studio task list / single task / bare result array /
+// our own export file / this tool's draft backup. Regions are folded with the
+// same shape as the pull service: an id is one region group, and a much
+// shorter region enclosed by another becomes a nested interjection.
+function importRegionsToRows(result, base){
+  const groups=new Map();
+  for(const x of result||[]){
+    const v=x.value||{};
+    const start=round3(Number(v.start)),end=round3(Number(v.end));
+    if(!(end>start)) continue;
+    const key=`${x.id||''}|${start}|${end}`;
+    if(!groups.has(key)) groups.set(key,{id:x.id||'',start,end,speaker:null,text:'',tags:[]});
+    const g=groups.get(key);
+    if(x.from_name==='speaker'){ const l=v.labels||[]; g.speaker=l[0]||g.speaker; }
+    else if(x.from_name==='text'){ g.text=(g.text||'')+((v.text||[]).join('')); }
+    else if(x.from_name==='tags'){ g.tags=[...(v.choices||[])]; }
+  }
+  const raw=[...groups.entries()].map(([key,g])=>({...g})).sort((a,b)=>a.start-b.start||b.end-a.end);
+  const rows=[];
+  const used=new Set();
+  for(let i=0;i<raw.length;i++){
+    if(used.has(i)) continue;
+    const r=raw[i];
+    // Any strictly-inner region of the same id group is a nested piece, even
+    // when it starts at the parent's very first millisecond. Regions that share
+    // the parent's interval are its siblings, never its children.
+    const kids=[];
+    const sameId=raw.filter(c=>r.id&&c.id===r.id);
+    // A child keeps the parent's id but must be strictly shorter, otherwise it
+    // is the parent's own sibling region from another export.
+    const nestedByLength=sameId.some(c=>c!==r && (c.end-c.start)<(r.end-r.start)-0.001
+      && c.start>=r.start-0.002 && c.end<=r.end+0.002 && c.start!==r.start);
+    if(nestedByLength){
+      // Nested pieces keep the parent's region id; separate sentences get their
+      // own ids. This is reliable even when a filler covers most of the row.
+      raw.forEach((c,j)=>{
+        if(j===i||used.has(j)||c.id!==r.id) return;
+        if(c.start>=r.start-0.002 && c.end<=r.end+0.002) kids.push(j);
+      });
+    }else{
+      raw.forEach((c,j)=>{
+        if(j===i||used.has(j)) return;
+        if((c.start!==r.start||c.end!==r.end) && c.start>=r.start-0.002 && c.end<=r.end+0.002
+           && (c.end-c.start) < (r.end-r.start)-0.001) kids.push(j);
+      });
+    }
+    const children=kids.map(j=>{used.add(j); return raw[j];});
+    used.add(i);
+    const body=r.text||'';
+    // A row whose whole text is a filler was an interjection-only row when it
+    // was exported (Label Studio has no flag for that); keep the semantics.
+    const fillerOnly=!!body.trim() && /^[嗯啊哦噢喔哎唉诶呀哈呃额，,。！？!?]+$/.test(body.trim());
+    const pieces=[{text:body,start:r.start,end:r.end,isInterjection:fillerOnly,
+      speaker:r.speaker||'UNKNOWN',speakerSource:'manual',speakerConfidence:'manual',reviewed:true}];
+    children.forEach(c=>pieces.push({text:c.text||'',start:c.start,end:c.end,isInterjection:true,
+      speaker:c.speaker||r.speaker||'UNKNOWN',speakerSource:'manual',speakerConfidence:'manual',reviewed:true}));
+    pieces.sort((a,b)=>a.start-b.start);
+    rows.push({id:`imp-${base}-${i}`,start:r.start,end:r.end,text:pieces.map(p=>p.text).join(''),
+      bodyText:body,pieces,hasInterjection:children.length>0,isInterjection:fillerOnly,
+      speaker:r.speaker||'UNKNOWN',speakerSource:'manual',speakerConfidence:'manual',reviewed:true,
+      tags:r.tags||[],grade:'imported',displayLabel:'导入',window:windowOf(r.start,r.end)});
+  }
+  return rows;
+}
+function extractImportRows(obj){
+  const isDraft=o=>Array.isArray(o?.utterances)||(Array.isArray(o)&&o.length&&Array.isArray(o[0]?.pieces));
+  if(isDraft(obj)) return {kind:'draft',rows:window.structuredClone(Array.isArray(obj)?obj:obj.utterances)};
+  if(Array.isArray(obj) && obj.some(isDraft)) {
+    const d=obj.find(isDraft);
+    return {kind:'draft',rows:window.structuredClone(Array.isArray(d)?d:d.utterances)};
+  }
+  if(!Array.isArray(obj) && !obj?.data && !obj?.annotations && !obj?.result && !obj?.predictions){
+    throw new Error('这个文件既不是标注导出，也不是草稿备份');
+  }
+  let task=obj;
+  if(Array.isArray(obj)) task=obj[0];
+  if(!task || typeof task!=='object') throw new Error('文件里没有可识别的数据');
+  const audios=[];
+  const collect=a=>{ if(a && !audios.includes(a)) audios.push(a); };
+  collect(task.data?.audio);
+  if(Array.isArray(obj)) obj.forEach(t=>collect(t?.data?.audio));
+  if(Array.isArray(task.annotations) && task.annotations.length){
+    const res=task.annotations.flatMap(a=>a.result||[]);
+    return {kind:'ls',rows:importRegionsToRows(res,'ls'),audios};
+  }
+  if(Array.isArray(task.result)) return {kind:'ls',rows:importRegionsToRows(task.result,'ls'),audios};
+  if(Array.isArray(task.predictions) && task.predictions.length){
+    return {kind:'ls',rows:importRegionsToRows(task.predictions[0].result||[],'ls'),audios};
+  }
+  throw new Error('没有找到标注结果（annotations/result）');
+}
+function audioMatches(audioPath){
+  if(!audioPath || !data) return false;
+  const mine=String(data.audio||''), ls=String(bundle?.recordings?.find(r=>r.taskId===data.taskId)?.lsAudio||'');
+  const base=p=>String(p||'').split('/').pop();
+  return base(audioPath)===base(mine) || (ls && base(audioPath)===base(ls));
+}
+async function importJsonFile(file){
+  if(!data||!data.taskId){ alert('请先选择一条录音，再导入 JSON。'); return; }
+  let parsed;
+  try{ parsed=JSON.parse(await file.text()); }
+  catch(e){ alert('不是合法的 JSON：'+e.message); return; }
+  let got;
+  try{ got=extractImportRows(parsed); }
+  catch(e){ alert('无法识别这个文件：'+e.message+'\n\n支持：Label Studio 导出的任务 JSON、本工具导出的 labels JSON、重置时下载的草稿备份。'); return; }
+  const rows=got.rows.filter(r=>Number(r.end)>Number(r.start));
+  if(!rows.length){ alert('文件里没有带起止时间的句子。'); return; }
+  const src=(got.audios||[]).length?got.audios[0]:'';
+  const sameAudio=!src||audioMatches(src);
+  const cur=data.utterances.length;
+  const lines=[`文件：${file.name}`,`识别到 ${rows.length} 句（${got.kind==='draft'?'草稿备份格式':'Label Studio 标注格式'}）。`,
+    `当前录音「${data.title}」有 ${cur} 句，导入后会被这 ${rows.length} 句整体替换。`];
+  if(src) lines.push(sameAudio?`音频一致：${src}`:`⚠ 文件里的音频是 ${src}，与当前录音「${data.audio}」不一致。`);
+  const tags=[...new Set(rows.flatMap(r=>r.tags||[]))];
+  lines.push(`说话人：${[...new Set(rows.map(r=>r.speaker||'UNKNOWN'))].join(', ')}`);
+  if(tags.length) lines.push(`标签：${tags.join(', ')}`);
+  lines.push('导入前会把当前内容备份下载成 JSON，可撤销（⌘Z）。继续？');
+  if(!confirm(lines.join('\n'))) return;
+  download(`draft-before-import-task${data.taskId}-${new Date().toISOString().replace(/[:.]/g,'-')}.json`,
+    JSON.stringify({taskId:data.taskId,projectId:data.projectId,utterances:data.utterances},null,2));
+  snapshot();
+  data.utterances=rows;
+  data.windows=data.windows||[];
+  sanitizeRows(data.utterances); migrateRows(data.utterances);
+  data.utterances.forEach(u=>{ u.window=windowOf(u.start,u.end); });
+  persist(); renderFilters(); render(); updateSide&&updateSide();
+  setSyncStatus(`已导入 ${rows.length} 句${sameAudio?'':'（音频不一致，请核对）'}。可撤销（⌘Z）`);
+}
+$('#importJson').addEventListener('click',()=>$('#importFile').click());
+$('#importFile').addEventListener('change',async e=>{
+  const f=e.target.files&&e.target.files[0];
+  e.target.value='';
+  if(!f) return;
+  try{ await importJsonFile(f); }catch(err){ alert('导入失败：'+err.message); }
+});
 function exportPayload(list=data.utterances){
   const result=[];
   list.forEach((u,idx)=>{
     const baseId=`u${idx.toString().padStart(4,'0')}`;
     const pieces=normalizedPieces(u);
     const bodyPieces=pieces.filter(p=>!p.isInterjection);
-    const bodyStart=bodyPieces.length?Math.min(...bodyPieces.map(p=>p.start)):u.start;
-    const bodyEnd=bodyPieces.length?Math.max(...bodyPieces.map(p=>p.end)):u.end;
+    const wholeInt=!bodyPieces.length && pieces.length>0;
+    const bodyText=wholeInt?pieces.map(p=>p.text||'').join('').trim():(u.bodyText||'').trim();
     result.push({id:baseId,from_name:'speaker',to_name:'audio',type:'labels',
-      value:{start:round3(u.start),end:round3(u.end),channel:0,labels:[u.speaker]}});
-    if((u.bodyText||'').trim()){
+      value:{start:round3(u.start),end:round3(u.end),channel:0,labels:[wholeInt?(pieces[0].speaker||u.speaker):u.speaker]}});
+    if(bodyText){
+      // Same interval as the speaker region: Label Studio groups regions by
+      // (id, start, end), so a narrower text box would come back as a separate row.
       result.push({id:baseId,from_name:'text',to_name:'audio',type:'textarea',
-        value:{start:round3(bodyStart),end:round3(bodyEnd),channel:0,text:[(u.bodyText||'').trim()]}});
+        value:{start:round3(u.start),end:round3(u.end),channel:0,text:[bodyText]}});
     }
     if(u.tags.length) result.push({id:baseId,from_name:'tags',to_name:'audio',type:'choices',
       value:{start:round3(u.start),end:round3(u.end),channel:0,choices:u.tags}});
     // Each nested interjection becomes its own region, with its own speaker
     // and true millisecond bounds, so it survives Label Studio's flat schema.
+    if(wholeInt) return;   // the row itself already carries this text
+    const nChild=pieces.filter(p=>p.isInterjection).length;
     pieces.filter(p=>p.isInterjection).forEach((p,k)=>{
       const pid=`${baseId}i${k}`;
+      // A sentence that starts on a filler would put the child's speaker region
+      // on the parent's exact interval; Label Studio then merges them into one
+      // group. Give the parent speaker region the span of the body instead --
+      // but only when it still owns some interval of its own.
+      const collide=(k===0 || k===nChild-1) && pieces.filter(q=>!q.isInterjection).length===0;
       result.push({id:pid,from_name:'speaker',to_name:'audio',type:'labels',
         value:{start:round3(p.start),end:round3(p.end),channel:0,labels:[p.speaker||u.speaker]}});
       if((p.text||'').trim()) result.push({id:pid,from_name:'text',to_name:'audio',type:'textarea',
